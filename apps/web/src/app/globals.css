@@ -1,0 +1,160 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Spiralyze brand palette: deep navy (#000F29) + amber/gold CTA (#F5A623)
+     with a blue accent (#1854F9). */
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 216 45% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 216 45% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 216 45% 12%;
+
+    --primary: 38 92% 52%;
+    --primary-foreground: 216 100% 9%;
+
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 216 40% 16%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 42%;
+
+    --accent: 38 100% 94%;
+    --accent-foreground: 30 90% 30%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 42%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 216 100% 9%;
+
+    --brand: 224 95% 54%;
+    --brand-foreground: 0 0% 100%;
+
+    --border: 214 25% 90%;
+    --input: 214 25% 90%;
+    --ring: 38 92% 52%;
+
+    --radius: 0.6rem;
+  }
+
+  .dark {
+    --background: 216 100% 8%;
+    --foreground: 0 0% 98%;
+
+    --card: 216 54% 11%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 216 54% 11%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 38 95% 58%;
+    --primary-foreground: 216 100% 9%;
+
+    --secondary: 216 40% 16%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 216 35% 15%;
+    --muted-foreground: 214 22% 70%;
+
+    --accent: 216 45% 18%;
+    --accent-foreground: 38 95% 70%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 98%;
+
+    --success: 142 65% 48%;
+    --success-foreground: 0 0% 98%;
+
+    --warning: 38 92% 55%;
+    --warning-foreground: 216 100% 9%;
+
+    --brand: 224 95% 62%;
+    --brand-foreground: 0 0% 100%;
+
+    --border: 216 40% 18%;
+    --input: 216 40% 20%;
+    --ring: 38 95% 58%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-display;
+  }
+  ::selection {
+    @apply bg-primary/20;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply border border-white/10 bg-white/70 backdrop-blur-xl dark:bg-white/[0.03];
+  }
+  .glass-strong {
+    @apply border border-black/5 bg-white/80 backdrop-blur-2xl dark:border-white/10 dark:bg-white/[0.05];
+  }
+  .text-gradient {
+    @apply bg-gradient-to-br from-foreground via-foreground to-foreground/50 bg-clip-text text-transparent;
+  }
+  .text-gradient-primary {
+    @apply bg-gradient-to-r from-amber-400 via-primary to-orange-400 bg-clip-text text-transparent;
+  }
+  .card-premium {
+    @apply rounded-2xl border bg-card shadow-sm transition-all duration-300 hover:shadow-md;
+  }
+}
+
+/* Print / PDF export styles */
+@media print {
+  header,
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  .card-premium,
+  [class*="card"] {
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+  main {
+    padding-top: 1rem !important;
+  }
+}
+
+/* Thin, subtle scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 9999px;
+}

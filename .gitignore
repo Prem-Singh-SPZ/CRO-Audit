@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Builds
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Prisma / SQLite database files (created at runtime)
+*.db
+*.db-journal
+*.db-wal
+packages/db/prisma/*.db*
+
+# Storage (generated screenshots / exports)
+storage/
+!storage/.gitkeep
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+.cache/
