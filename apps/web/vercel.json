@@ -4,7 +4,8 @@
   "buildCommand": "next build",
   "functions": {
     "src/app/api/analyze/route.ts": {
-      "maxDuration": 60
+      "maxDuration": 120,
+      "memory": 1769
     }
   }
 }

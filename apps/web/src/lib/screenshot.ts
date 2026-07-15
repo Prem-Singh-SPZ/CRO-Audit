@@ -1,91 +1,136 @@
+import chromium from "@sparticuz/chromium";
+import puppeteer, { type Browser } from "puppeteer-core";
+
+import { detectChallenge } from "@/lib/challenge";
+
 export interface Screenshot {
   device: "desktop" | "mobile";
-  url: string;
+  // Raw base64 (no data-URI prefix) for feeding vision LLMs via inlineData.
+  base64: string;
+  mimeType: string;
+  // Full data URI (data:image/jpeg;base64,...) for rendering in the report UI
+  // without any external image host.
+  dataUri: string;
   width: number;
   height: number;
 }
 
-const MICROLINK_ENDPOINT = "https://api.microlink.io";
-
-// Microlink device profile used for the mobile capture (Puppeteer device name).
-const MOBILE_DEVICE = "iPhone X";
-
-interface MicrolinkResponse {
-  status?: string;
-  data?: {
-    screenshot?: {
-      url?: string;
-      width?: number;
-      height?: number;
-    };
-  };
+export interface ScreenshotResult {
+  screenshots: Screenshot[];
+  // Set when the renderer was served a bot-protection / verification wall
+  // instead of the real page. The HTML analysis may still be valid.
+  blockedReason: string | null;
 }
 
-async function capture(
-  url: string,
-  device: "desktop" | "mobile"
-): Promise<Screenshot | null> {
-  const params = new URLSearchParams({
-    url,
-    screenshot: "true",
-    meta: "false",
-  });
-  // Mobile uses a device profile; desktop uses Microlink's default viewport
-  // (custom viewport params bypass the cache and slow the render down).
-  if (device === "mobile") params.set("device", MOBILE_DEVICE);
+const DESKTOP_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
-  const key = process.env.MICROLINK_API_KEY;
-  const headers: Record<string, string> = key ? { "x-api-key": key } : {};
+const VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 1 } as const;
+// Bound the in-memory image (and the sessionStorage payload) for very tall
+// pages by clipping the capture height.
+const MAX_HEIGHT = 12000;
+const NAV_TIMEOUT_MS = 30_000;
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25_000);
-    const res = await fetch(`${MICROLINK_ENDPOINT}/?${params.toString()}`, {
-      headers,
-      signal: controller.signal,
+async function launchBrowser(): Promise<Browser> {
+  // Local dev: point at an installed Chrome/Edge. The serverless Chromium args
+  // (e.g. --single-process) can crash a desktop Chrome, so use a minimal set.
+  const localPath = process.env.CHROME_EXECUTABLE_PATH;
+  if (localPath) {
+    return puppeteer.launch({
+      executablePath: localPath,
+      headless: true,
+      defaultViewport: VIEWPORT,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
     });
-    clearTimeout(timeout);
-    if (!res.ok) return null;
-
-    const json = (await res.json()) as MicrolinkResponse;
-    const shot = json?.data?.screenshot;
-    if (json?.status !== "success" || !shot?.url) return null;
-
-    return {
-      device,
-      url: shot.url,
-      width: shot.width ?? (device === "mobile" ? 390 : 1280),
-      height: shot.height ?? 0,
-    };
-  } catch {
-    return null;
   }
-}
 
-async function captureWithRetry(
-  url: string,
-  device: "desktop" | "mobile"
-): Promise<Screenshot | null> {
-  const first = await capture(url, device);
-  if (first) return first;
-  // Free-tier throttling is common; one short-backoff retry recovers most.
-  await new Promise((r) => setTimeout(r, 1200));
-  return capture(url, device);
+  // Serverless (Vercel): use the bundled, brotli-compressed Chromium binary.
+  chromium.setGraphicsMode = false;
+  return puppeteer.launch({
+    args: chromium.args,
+    defaultViewport: VIEWPORT,
+    executablePath: await chromium.executablePath(),
+    headless: true,
+  });
 }
 
 /**
- * Captures desktop + mobile screenshots via Microlink's hosted API. Returns
- * hosted image URLs (not base64), so the report payload stays tiny and never
- * blows the sessionStorage quota. Captures run sequentially (the free tier
- * throttles concurrent requests) with a retry; this stays off the critical
- * path since it runs in parallel with the slower PageSpeed call. Keyless works
- * on the free tier; set MICROLINK_API_KEY for higher limits in production.
+ * Captures a desktop full-page screenshot with a self-hosted headless Chromium
+ * (no external screenshot service). The image is returned in-memory as base64 /
+ * data URI so it can be fed to a vision LLM and rendered in the report without
+ * any image host. Bot-wall / verification pages are detected (via the rendered
+ * title + body sample and the navigation status) and reported so we never
+ * annotate a security-check page.
  */
-export async function captureScreenshots(url: string): Promise<Screenshot[]> {
-  const shots: Screenshot[] = [];
-  const desktop = await captureWithRetry(url, "desktop");
-  if (desktop) shots.push(desktop);
-  const mobile = await captureWithRetry(url, "mobile");
-  if (mobile) shots.push(mobile);
-  return shots;
+export async function captureScreenshots(url: string): Promise<ScreenshotResult> {
+  const screenshots: Screenshot[] = [];
+  let blockedReason: string | null = null;
+  let browser: Browser | null = null;
+
+  try {
+    browser = await launchBrowser();
+    const page = await browser.newPage();
+    await page.setUserAgent(DESKTOP_UA);
+    page.setDefaultNavigationTimeout(NAV_TIMEOUT_MS);
+
+    let status = 0;
+    try {
+      const response = await page.goto(url, { waitUntil: "networkidle2" });
+      status = response?.status() ?? 0;
+    } catch {
+      // Navigation timed out or aborted — capture whatever rendered anyway.
+    }
+
+    // Let late-loading hero animations / lazy content settle.
+    await new Promise((r) => setTimeout(r, 1500));
+
+    // Detect bot walls from the rendered page before trusting the screenshot.
+    const title = await page.title().catch(() => "");
+    const bodySample = await page
+      .evaluate(() => document.body?.innerText?.slice(0, 600) ?? "")
+      .catch(() => "");
+    const challenge = detectChallenge(`${title} ${bodySample}`);
+    if (challenge) {
+      blockedReason = challenge;
+    } else if (status >= 400) {
+      blockedReason = status === 403 || status === 429 ? "WAF block" : `HTTP ${status}`;
+    }
+
+    if (!blockedReason) {
+      const dims = await page.evaluate(() => ({
+        width: document.documentElement.scrollWidth,
+        height: document.documentElement.scrollHeight,
+      }));
+      const width = dims.width || VIEWPORT.width;
+      const clipped = dims.height > MAX_HEIGHT;
+      const height = clipped ? MAX_HEIGHT : dims.height || VIEWPORT.height;
+
+      const raw = await page.screenshot(
+        clipped
+          ? {
+              type: "jpeg",
+              quality: 80,
+              clip: { x: 0, y: 0, width, height, scale: 1 },
+              captureBeyondViewport: true,
+            }
+          : { type: "jpeg", quality: 80, fullPage: true }
+      );
+
+      const base64 = Buffer.from(raw).toString("base64");
+      screenshots.push({
+        device: "desktop",
+        base64,
+        mimeType: "image/jpeg",
+        dataUri: `data:image/jpeg;base64,${base64}`,
+        width,
+        height,
+      });
+    }
+  } catch (err) {
+    console.error("[screenshot] capture failed:", err);
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+
+  return { screenshots, blockedReason };
 }

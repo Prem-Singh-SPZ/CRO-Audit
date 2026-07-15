@@ -1,26 +1,9 @@
 import * as cheerio from "cheerio";
 import type { PageContext, FormInfo, ButtonInfo, LinkInfo } from "@/lib/cro";
+import { detectChallenge } from "@/lib/challenge";
 
 const DESKTOP_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
-
-// Markers of a bot-protection / verification interstitial (Cloudflare, etc.).
-const CHALLENGE_MARKERS: { pattern: RegExp; reason: string }[] = [
-  { pattern: /just a moment/i, reason: "Cloudflare challenge" },
-  { pattern: /checking your browser/i, reason: "Cloudflare challenge" },
-  { pattern: /attention required/i, reason: "Cloudflare block" },
-  { pattern: /cf-chl|cf_chl|__cf_/i, reason: "Cloudflare challenge" },
-  { pattern: /verify(ing)? you are (a )?human/i, reason: "Human verification" },
-  { pattern: /enable javascript and cookies/i, reason: "JS/cookie gate" },
-  {
-    pattern: /(are you a robot|i'm not a robot|recaptcha|hcaptcha|captcha)/i,
-    reason: "CAPTCHA",
-  },
-  {
-    pattern: /access denied|ddos protection|request blocked/i,
-    reason: "WAF block",
-  },
-];
 
 const CTA_KEYWORDS =
   /(get started|start free|sign up|signup|buy now|try|book|request|subscribe|download|contact|get my|claim|get a demo|demo|schedule|talk to|learn more|see (a )?demo|free trial|join)/i;
@@ -191,16 +174,11 @@ export async function analyzePage(url: string): Promise<PageContext> {
   const title = $("title").first().text().trim() || null;
   const lang = $("html").attr("lang") ?? null;
 
-  // Challenge detection over title + body sample
+  // Challenge detection over title + body sample. Scoped to the top of the
+  // page so security vendors that merely mention "bots"/"security" deep in
+  // their real copy don't false-positive.
   const sample = `${title ?? ""} ${bodyText.slice(0, 600)}`;
-  if (!blockReason) {
-    for (const { pattern, reason } of CHALLENGE_MARKERS) {
-      if (pattern.test(sample)) {
-        blockReason = reason;
-        break;
-      }
-    }
-  }
+  if (!blockReason) blockReason = detectChallenge(sample);
   if (!blockReason && wordCount < 20 && h1.length === 0 && buttons.length === 0) {
     blockReason = "Empty / non-rendered page";
   }

@@ -20,7 +20,7 @@ export interface GenerateInput {
 
 export interface GenerateResult {
   report: ReportJson;
-  provider: "openai" | "anthropic" | "mock";
+  provider: "openai" | "anthropic" | "gemini" | "mock";
 }
 
 /**
@@ -42,6 +42,9 @@ export async function generateReport(
     } else if (provider === "anthropic" && process.env.ANTHROPIC_API_KEY) {
       const report = await callAnthropic(input);
       if (report) return { report, provider: "anthropic" };
+    } else if (provider === "gemini" && process.env.GEMINI_API_KEY) {
+      const report = await callGemini(input);
+      if (report) return { report, provider: "gemini" };
     }
   } catch (err) {
     console.error("[ai] LLM provider failed; using heuristic engine:", err);
@@ -94,9 +97,9 @@ function compactContext(ctx: PageContext, lh: LighthouseSummary): string {
 }
 
 function systemPrompt(): string {
-  return `You are a world-class Conversion Rate Optimization (CRO) expert auditing a landing page. You are given (1) structured signals crawled from the page, (2) PageSpeed/Lighthouse metrics, and (3) screenshots of the page (desktop and/or mobile).
+  return `You are a world-class Conversion Rate Optimization (CRO) expert auditing a landing page. You are given (1) structured signals crawled from the page, (2) PageSpeed/Lighthouse metrics, and (3) a full-page DESKTOP screenshot of the page.
 
-Analyze the ACTUAL page. Every issue you raise MUST reference concrete, page-specific evidence (quote the real headline, the real CTA labels, the real form fields, real counts/metrics). Do NOT emit generic boilerplate that could apply to any site. Prefer 5-9 high-signal, distinct issues over a long shallow list.
+Analyze the ENTIRE page from top to bottom — hero, value proposition, features, testimonials, social proof, pricing, forms, footer, and every section in between. The screenshot provided is a FULL-PAGE desktop capture (not just above-the-fold). Every issue you raise MUST reference concrete, page-specific evidence (quote the real headline, the real CTA labels, the real form fields, real counts/metrics). Do NOT emit generic boilerplate that could apply to any site. Do NOT focus only on the hero section. Prefer 5-9 high-signal, distinct issues spread across DIFFERENT sections of the page.
 
 Return ONLY a JSON object (no markdown, no prose) with EXACTLY this shape:
 {
@@ -127,14 +130,14 @@ Return ONLY a JSON object (no markdown, no prose) with EXACTLY this shape:
   "estimatedImpact": <string e.g. "+12-28% conversions">
 }
 
-For "annotation", set x/y to the fractional position (0=left/top, 1=right/bottom) of the element on the screenshot for that device, so it can be pinned visually. Use null when the issue isn't tied to a visible spot. All categoryScores keys are required.`;
+For "annotation", ALWAYS use "device": "desktop" (only a desktop screenshot is available). Set x/y to the fractional position (0=left/top, 1=right/bottom) of the element on the desktop screenshot, so it can be pinned visually. Use null when the issue isn't tied to a visible spot. All categoryScores keys are required.`;
 }
 
 function userText(input: GenerateInput): string {
-  return `Audit this page and return the JSON report.\n\nCRAWLED SIGNALS + METRICS:\n${compactContext(
+  return `Audit this page TOP TO BOTTOM and return the JSON report.\n\nCRAWLED SIGNALS + METRICS:\n${compactContext(
     input.pageContext,
     input.lighthouse
-  )}\n\nScreenshots are attached (labelled by device). Base your visual/hierarchy/mobile findings on them.`;
+  )}\n\nA full-page desktop screenshot is attached. Scroll through the ENTIRE screenshot — analyze the hero, mid-page content (features, testimonials, social proof, pricing), forms, and footer. Base your visual/hierarchy findings on it.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +152,7 @@ async function callOpenAI(input: GenerateInput): Promise<ReportJson | null> {
       type: "text",
       text: `Screenshot (${s.device}):`,
     });
-    content.push({ type: "image_url", image_url: { url: s.url } });
+    content.push({ type: "image_url", image_url: { url: s.dataUri } });
   }
 
   const res = await withTimeout((signal) =>
@@ -191,7 +194,7 @@ async function callAnthropic(input: GenerateInput): Promise<ReportJson | null> {
     content.push({ type: "text", text: `Screenshot (${s.device}):` });
     content.push({
       type: "image",
-      source: { type: "url", url: s.url },
+      source: { type: "base64", media_type: s.mimeType, data: s.base64 },
     });
   }
 
@@ -206,7 +209,7 @@ async function callAnthropic(input: GenerateInput): Promise<ReportJson | null> {
       },
       body: JSON.stringify({
         model,
-        max_tokens: 4096,
+        max_tokens: 16384,
         system: `${systemPrompt()}\n\nReturn only the raw JSON object.`,
         messages: [{ role: "user", content }],
       }),
@@ -220,7 +223,96 @@ async function callAnthropic(input: GenerateInput): Promise<ReportJson | null> {
   const text = Array.isArray(json?.content)
     ? json.content.map((b: any) => b?.text ?? "").join("")
     : "";
-  return coerceReport(text);
+  const report = coerceReport(text);
+  if (!report) {
+    console.error(
+      "[ai] Anthropic response could not be parsed (stop_reason=" +
+        json?.stop_reason +
+        ", textLen=" +
+        text.length +
+        "):",
+      text.slice(0, 400)
+    );
+  }
+  return report;
+}
+
+// ---------------------------------------------------------------------------
+// Google Gemini (generateContent, vision)
+// ---------------------------------------------------------------------------
+
+async function callGemini(input: GenerateInput): Promise<ReportJson | null> {
+  const model = process.env.GEMINI_MODEL || "gemini-3.1-pro-preview";
+  const apiKey = process.env.GEMINI_API_KEY as string;
+
+  const parts: unknown[] = [{ text: userText(input) }];
+  for (const s of input.screenshots) {
+    parts.push({ text: `Screenshot (${s.device}):` });
+    parts.push({
+      inlineData: {
+        mimeType: s.mimeType,
+        data: s.base64,
+      },
+    });
+  }
+
+  const res = await withTimeout((signal) =>
+    fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      {
+        method: "POST",
+        signal,
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [
+              {
+                text: `${systemPrompt()}\n\nReturn only the raw JSON object.`,
+              },
+            ],
+          },
+          contents: [{ parts }],
+          generationConfig: {
+            temperature: 0.4,
+            responseMimeType: "application/json",
+            // Gemini 3 is a thinking model whose reasoning tokens share the
+            // output budget; give ample room and keep thinking low so the JSON
+            // report always completes (avoids truncated, unparseable output).
+            maxOutputTokens: 65536,
+            thinkingConfig: { thinkingLevel: "low" },
+          },
+        }),
+      }
+    )
+  );
+
+  if (!res.ok) {
+    console.error("[ai] Gemini HTTP", res.status, await safeText(res));
+    return null;
+  }
+
+  const json = (await res.json()) as any;
+  const text = Array.isArray(json?.candidates?.[0]?.content?.parts)
+    ? json.candidates[0].content.parts
+        .map((p: any) => p?.text ?? "")
+        .join("")
+    : "";
+
+  const report = coerceReport(text);
+  if (!report) {
+    console.error(
+      "[ai] Gemini response could not be parsed (finishReason=" +
+        json?.candidates?.[0]?.finishReason +
+        ", textLen=" +
+        text.length +
+        "):",
+      text.slice(0, 400)
+    );
+  }
+  return report;
 }
 
 // ---------------------------------------------------------------------------
@@ -229,7 +321,7 @@ async function callAnthropic(input: GenerateInput): Promise<ReportJson | null> {
 
 async function withTimeout(
   fn: (signal: AbortSignal) => Promise<Response>,
-  ms = 45_000
+  ms = 110_000
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);

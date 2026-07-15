@@ -36,9 +36,15 @@ export function AnnotatedScreenshots({
   );
 
   const active = screenshots.find((s) => s.device === device);
-  const pins = issues.filter(
-    (i) => i.device === device && i.annotationX != null && i.annotationY != null
-  );
+  // Only pin annotations when there's an image to pin them onto.
+  const pins = active
+    ? issues.filter(
+        (i) =>
+          i.device === device &&
+          i.annotationX != null &&
+          i.annotationY != null
+      )
+    : [];
 
   return (
     <div>

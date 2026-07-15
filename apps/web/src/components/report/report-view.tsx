@@ -44,6 +44,8 @@ export function ReportView({
     .sort((a, b) => SEVERITY_META[a.severity].order - SEVERITY_META[b.severity].order)
     .slice(0, 4);
 
+  const hasScreenshots = screenshots.length > 0;
+
   return (
     <div className="min-h-screen pb-24">
       {readOnly ? (
@@ -95,11 +97,16 @@ export function ReportView({
           </Card>
         </motion.div>
 
-        {/* Detailed tabs — screenshots first, right below the summary */}
-        <Tabs defaultValue="screenshots" className="w-full">
+        {/* Detailed tabs — screenshots first when available, else categories */}
+        <Tabs
+          defaultValue={hasScreenshots ? "screenshots" : "categories"}
+          className="w-full"
+        >
           <div className="overflow-x-auto pb-1">
             <TabsList>
-              <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
+              {hasScreenshots && (
+                <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
+              )}
               <TabsTrigger value="categories">Categories</TabsTrigger>
               <TabsTrigger value="performance">Performance</TabsTrigger>
               <TabsTrigger value="issues">Issues ({issues.length})</TabsTrigger>
@@ -107,19 +114,21 @@ export function ReportView({
             </TabsList>
           </div>
 
-          <TabsContent value="screenshots">
-            <Card>
-              <CardHeader>
-                <CardTitle>Annotated screenshots</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <AnnotatedScreenshots
-                  screenshots={screenshots}
-                  issues={issues}
-                />
-              </CardContent>
-            </Card>
-          </TabsContent>
+          {hasScreenshots && (
+            <TabsContent value="screenshots">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Annotated screenshots</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <AnnotatedScreenshots
+                    screenshots={screenshots}
+                    issues={issues}
+                  />
+                </CardContent>
+              </Card>
+            </TabsContent>
+          )}
 
           <TabsContent value="categories">
             <Card>

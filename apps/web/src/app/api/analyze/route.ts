@@ -10,8 +10,10 @@ import type { ReportResponse } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// PageSpeed Insights can take 15-30s; allow headroom (Vercel Pro up to 60s).
-export const maxDuration = 60;
+// PageSpeed (15-45s) runs before a vision-LLM call (Opus can take 60-90s), so
+// allow generous headroom. On Vercel this needs a plan whose function limit is
+// >= this value (Pro/Enterprise); Hobby caps at 10s.
+export const maxDuration = 120;
 
 export async function POST(request: Request) {
   let body: unknown;
@@ -32,11 +34,12 @@ export async function POST(request: Request) {
 
   try {
     // Crawl (cheerio), PageSpeed metrics, and screenshots run in parallel.
-    const [pageContext, pageSpeed, screenshots] = await Promise.all([
+    const [pageContext, pageSpeed, screenshotResult] = await Promise.all([
       analyzePage(url),
       getPageSpeed(url),
       captureScreenshots(url),
     ]);
+    const screenshots = screenshotResult.screenshots;
 
     const lighthouse = pageSpeed.lighthouse ?? fallbackLighthouse(pageContext);
     const { report, provider } = await generateReport({
@@ -98,7 +101,7 @@ export async function POST(request: Request) {
       screenshots: screenshots.map((s) => ({
         id: randomUUID(),
         device: s.device,
-        url: s.url,
+        url: s.dataUri,
         width: s.width,
         height: s.height,
       })),
