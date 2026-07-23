@@ -22,7 +22,11 @@ export function ScoreRadar({ scores }: { scores: CategoryScores }) {
         <PolarGrid stroke="hsl(var(--border))" />
         <PolarAngleAxis
           dataKey="category"
-          tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+          tick={{
+            fill: "hsl(var(--foreground))",
+            fontSize: 12,
+            fontWeight: 600,
+          }}
         />
         <Radar
           name="Score"

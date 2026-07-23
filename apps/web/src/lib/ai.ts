@@ -8,6 +8,9 @@ import {
   type LighthouseSummary,
   type ScoreCategory,
   type SeverityLevel,
+  type AuditContext,
+  type ComplexityLevel,
+  type DiyRiskLevel,
 } from "@/lib/cro";
 import { analyzeMock } from "@/lib/mock-ai";
 import type { Screenshot } from "@/lib/screenshot";
@@ -16,6 +19,7 @@ export interface GenerateInput {
   pageContext: PageContext;
   lighthouse: LighthouseSummary;
   screenshots: Screenshot[];
+  auditContext?: AuditContext;
 }
 
 export interface GenerateResult {
@@ -97,47 +101,112 @@ function compactContext(ctx: PageContext, lh: LighthouseSummary): string {
 }
 
 function systemPrompt(): string {
-  return `You are a world-class Conversion Rate Optimization (CRO) expert auditing a landing page. You are given (1) structured signals crawled from the page, (2) PageSpeed/Lighthouse metrics, and (3) a full-page DESKTOP screenshot of the page.
+  return `SYSTEM INSTRUCTIONS & CRO RULEBOOK
+You are an uncompromising, elite Conversion Rate Optimization (CRO) Auditor. Your task is to critique the provided landing page screenshot and accompanying DOM/text metadata using a strict heuristic evaluation framework.
 
-Analyze the ENTIRE page from top to bottom — hero, value proposition, features, testimonials, social proof, pricing, forms, footer, and every section in between. The screenshot provided is a FULL-PAGE desktop capture (not just above-the-fold). Every issue you raise MUST reference concrete, page-specific evidence (quote the real headline, the real CTA labels, the real form fields, real counts/metrics). Do NOT emit generic boilerplate that could apply to any site. Do NOT focus only on the hero section. Prefer 5-9 high-signal, distinct issues spread across DIFFERENT sections of the page.
+Do not give generic advice like "make the button bigger." You must analyze the core conversion leaks across the following 5 specific pillars derived from the LIFT Model, Gestalt UX Laws, and Behavioural Psychology:
 
-Return ONLY a JSON object (no markdown, no prose) with EXACTLY this shape:
+PILLAR 1: CLARITY & VALUE PROPOSITION (The 5-Second Test)
+- Rule: A user must understand exactly what the product/service is, who it is for, and the primary benefit within 5 seconds of landing.
+- Check for: Vague, artsy headlines; lack of a supporting subheadline; hidden primary CTAs; failure to explain the "Unique Selling Proposition" (USP) above the fold.
+
+PILLAR 2: COGNITIVE FRICTION & EYEFLOW (Gestalt UX Laws)
+- Rule: Minimize the mental effort required to navigate the page. The user's eyes should flow naturally down the page toward the primary action.
+- Check for: Bad visual hierarchy (e.g., secondary text larger than headlines); cluttered blocks of text instead of scannable bullet points; form fields asking for unneeded data; confusing navigational menus.
+
+PILLAR 3: USER ANXIETY & RISK REVERSAL (Trust Signals)
+- Rule: Every action requires trust. If you ask for a click, email, or money, you must actively dismantle the user's hidden fears (FUDs: Fears, Uncertainties, Doubts).
+- Check for: Missing reviews/testimonials, lack of brand authority logos, absent "no credit card required" or "money-back guarantee" disclaimers near the CTA, and missing privacy assurances on form captures.
+
+PILLAR 4: VISUAL DISTRACTION & OPTION PARALYSIS (Hick's Law)
+- Rule: The more options a user has, the longer it takes to make a decision—or they abandon the page entirely.
+- Check for: Multiple primary call-to-action buttons competing for attention; external links pointing away from the landing page; excessive pop-ups or massive, busy graphics that pull focus away from the pitch.
+
+PILLAR 5: INCENTIVE & RELEVANCE (Message Match)
+- Rule: The page must match user intent and give them an urgent reason to stay or act immediately.
+- Check for: Generic CTAs ("Submit", "Learn More") instead of value-driven, action-oriented CTAs ("Get My Free Audit", "Start Saving Today"); lack of ethical urgency (scarcity, bonuses, or seasonal context).
+
+INPUTS YOU RECEIVE
+(1) A full-page DESKTOP screenshot (top-to-bottom, not just above the fold). (2) Crawled DOM/structural signals (headline, CTA labels, form fields, nav, counts). (3) The raw visible page COPY TEXT — analyze the literal copy. (4) PageSpeed/Lighthouse metrics. (5) OPTIONAL business context (Target Audience, Core Product/Service, Primary Traffic Source) — when present, use it to judge PILLAR 5 Message Match, not just generic best practice.
+
+CRITIQUE ARCHITECTURE (JSON OUTPUT FORMAT)
+You must analyze the layout, structural engineering, and copywriting. For every single flaw identified, output a highly detailed object matching the schema below.
+
+FLAW COVERAGE (NO ARTIFICIAL LIMIT):
+- Report EVERY genuine, defensible conversion flaw you can substantiate — there is NO minimum and NO maximum count. Be exhaustive.
+- CRITICAL: Do NOT default to exactly one flaw per pillar. Pillars are lenses, not quotas. A single pillar is usually violated MULTIPLE times across different parts of the page, and a single page section often contains several distinct flaws. Report each one separately.
+- Work section by section, top to bottom. For EACH page section that exists (hero/above-the-fold, value proposition, features/benefits, social proof/testimonials, pricing, forms/lead capture, navigation/menus, footer), inspect it against ALL 5 pillars (Clarity, Friction, Anxiety, Distraction, Incentive) and list every real problem you find there before moving to the next section.
+- A larger report is only better when every item is real. Return as many flaws as the page genuinely warrants — a clean, well-optimized page yields few; a typical page with real conversion problems will usually surface many more than five.
+
+CREDIBILITY GUARDRAILS (STRICT — protects the tool's reputation):
+- ZERO fabrication or padding. If you cannot cite concrete, page-specific evidence for a flaw, DO NOT include it. Never invent elements, copy, or metrics that are not actually present in the screenshot/DOM/copy.
+- Every flaw MUST quote or reference the REAL page content — the real headline, the real CTA/button labels, the real copy lines, the real form fields, real counts/metrics, or a clearly-visible layout fact.
+- NEVER emit generic boilerplate that could apply to any site. If an item reads like it could be pasted onto a random website, delete it.
+- No duplicates or near-duplicates: each flaw must be a materially distinct problem, not the same issue re-worded.
+- Do not manufacture problems on a strong page just to lengthen the list. Under-reporting a fake issue is always better than damaging credibility with a false positive.
+
+Crucial Copywriting Rule: You must analyze the literal text copy and diagnose exactly WHAT is wrong and WHY. However, you must NOT give away the step-by-step technical implementation for free — that is our paid deliverable.
+
+LEAD-GENERATION GATING RULE (STRICT): "actionable_fix" must be a value-selling TEASER, never a how-to. Do NOT include code, exact copy rewrites, CSS/HTML instructions, or numbered steps. Instead, describe the TYPE of work required and route the user to book a call, using this exact pattern (adapt only the first clause to the specific flaw):
+"Requires custom UX/copywriting redesign. We have prepared a mock-up template for this. [Book a call to view your custom template]."
+
+Return ONLY a valid JSON object (no markdown fences, no prose, no trailing commentary) with this schema:
 {
-  "overallScore": <int 0-100>,
-  "categoryScores": { ${SCORE_CATEGORIES.map((c) => `"${c}": <int 0-100>`).join(", ")} },
-  "summary": <string, 2-4 sentences, references this page specifically>,
-  "strengths": [<string>, ...],
-  "weaknesses": [<string>, ...],
-  "issues": [
+  "conversion_score": <int 1-100, based on total structural compliance>,
+  "primary_bottleneck": "<the single biggest design or text flaw killing conversions on this page>",
+  "flaws": [
     {
-      "category": <short string e.g. "Headline", "CTA", "Trust Signals", "Forms", "Performance", "Mobile UX">,
-      "title": <string, specific>,
-      "description": <string, cites concrete evidence from THIS page>,
-      "whyItMatters": <string>,
-      "severity": <one of ${SEVERITIES.join(" | ")}>,
+      "pillar": "<Clarity | Friction | Anxiety | Distraction | Incentive>",
+      "impact": "<High | Medium | Low>",
+      "element": "<e.g., Hero Headline, Primary Form, Sub-navigation>",
+      "issue_discovered": "<detailed explanation of the visual or text mistake, quoting the real page content>",
+      "psychology_why_it_fails": "<the specific cognitive bias or user behavior causing drop-offs here>",
+      "complexity": "<High | Medium | Low — how difficult this fix is to implement correctly>",
+      "risk_of_diy": "<High Risk | Moderate Risk | Low Risk — the danger of the site owner breaking their analytics tracking, layout, or styling if they attempt this themselves>",
+      "actionable_fix": "<a value-selling TEASER per the LEAD-GENERATION GATING RULE — NOT a how-to>",
+      "estimated_conversion_impact": "<e.g. +4-9%>",
       "confidence": <int 0-100>,
-      "businessImpact": <string>,
-      "suggestedFix": <string, concrete and actionable>,
-      "estimatedConversionImpact": <string e.g. "+4-9%">,
-      "annotation": { "device": <${DEVICES.join(" | ")}>, "x": <0-1>, "y": <0-1> } | null
+      "annotation": { "device": "desktop", "x": <0-1>, "y": <0-1> } | null
     }
   ],
-  "recommendations": [
-    { "title": <string>, "description": <string>, "impact": <int 1-5>, "effort": <int 1-5>, "category": <string> }
-  ],
-  "priority": <"high" | "medium" | "low">,
+  "categoryScores": { ${SCORE_CATEGORIES.map((c) => `"${c}": <int 0-100>`).join(", ")} },
+  "summary": "<2-4 sentences referencing THIS page specifically>",
+  "strengths": ["<string>", ...],
+  "weaknesses": ["<string>", ...],
+  "recommendations": [ { "title": "<string>", "description": "<string>", "impact": <int 1-5>, "effort": <int 1-5>, "category": "<string>" } ],
+  "priority": "<high | medium | low>",
   "confidence": <int 0-100>,
-  "estimatedImpact": <string e.g. "+12-28% conversions">
+  "estimatedImpact": "<e.g. +12-28% conversions>"
 }
 
-For "annotation", ALWAYS use "device": "desktop" (only a desktop screenshot is available). Set x/y to the fractional position (0=left/top, 1=right/bottom) of the element on the desktop screenshot, so it can be pinned visually. Use null when the issue isn't tied to a visible spot. All categoryScores keys are required.`;
+SCHEMA COMPLIANCE RULES
+- "annotation": ALWAYS use "device": "desktop" (only a desktop screenshot exists). Set x/y to the fractional position (0=left/top, 1=right/bottom) of the element on the desktop screenshot so it can be pinned. Use null when the flaw isn't tied to a visible spot.
+- All ${SCORE_CATEGORIES.length} categoryScores keys are required, each 0-100.
+- "conversion_score", "primary_bottleneck", and a non-empty "flaws" array are mandatory.
+- Output raw JSON only. Do not wrap it in markdown fences.`;
+}
+
+function auditContextText(ctx?: AuditContext): string {
+  if (!ctx) return "";
+  const lines: string[] = [];
+  if (ctx.targetAudience) lines.push(`- Target Audience: ${ctx.targetAudience}`);
+  if (ctx.coreProduct) lines.push(`- Core Product/Service: ${ctx.coreProduct}`);
+  if (ctx.primaryTrafficSource)
+    lines.push(`- Primary Traffic Source: ${ctx.primaryTrafficSource}`);
+  if (lines.length === 0) return "";
+  return `\n\nBUSINESS CONTEXT (use this to judge message-match & relevance):\n${lines.join(
+    "\n"
+  )}`;
 }
 
 function userText(input: GenerateInput): string {
+  const copy = input.pageContext.copyText
+    ? `\n\nRAW PAGE COPY (verbatim, truncated — quote from this):\n"""\n${input.pageContext.copyText}\n"""`
+    : "";
   return `Audit this page TOP TO BOTTOM and return the JSON report.\n\nCRAWLED SIGNALS + METRICS:\n${compactContext(
     input.pageContext,
     input.lighthouse
-  )}\n\nA full-page desktop screenshot is attached. Scroll through the ENTIRE screenshot — analyze the hero, mid-page content (features, testimonials, social proof, pricing), forms, and footer. Base your visual/hierarchy findings on it.`;
+  )}${auditContextText(input.auditContext)}${copy}\n\nA full-page desktop screenshot is attached. Scroll through the ENTIRE screenshot — analyze the hero, mid-page content (features, testimonials, social proof, pricing), forms, and footer. Base your visual/hierarchy findings on it.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -279,10 +348,11 @@ async function callGemini(input: GenerateInput): Promise<ReportJson | null> {
             temperature: 0.4,
             responseMimeType: "application/json",
             // Gemini 3 is a thinking model whose reasoning tokens share the
-            // output budget; give ample room and keep thinking low so the JSON
-            // report always completes (avoids truncated, unparseable output).
+            // output budget. Medium thinking gives a more rigorous, exhaustive
+            // section-by-section audit; the large output budget leaves room for
+            // both the reasoning and the full JSON report without truncation.
             maxOutputTokens: 65536,
-            thinkingConfig: { thinkingLevel: "low" },
+            thinkingConfig: { thinkingLevel: "medium" },
           },
         }),
       }
@@ -345,6 +415,31 @@ const clampInt = (n: unknown, min: number, max: number, fallback: number) => {
   return Math.max(min, Math.min(max, v));
 };
 
+// Maps a High/Medium/Low "impact" label (spec alias) to our severity scale.
+function impactToSeverity(impact: unknown): SeverityLevel {
+  const v = String(impact ?? "").trim().toLowerCase();
+  if (v === "high" || v === "critical") return "HIGH";
+  if (v === "low") return "LOW";
+  if (v === "info") return "INFO";
+  return "MEDIUM";
+}
+
+function normalizeComplexity(v: unknown): ComplexityLevel | undefined {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (s.startsWith("high")) return "High";
+  if (s.startsWith("med")) return "Medium";
+  if (s.startsWith("low")) return "Low";
+  return undefined;
+}
+
+function normalizeDiyRisk(v: unknown): DiyRiskLevel | undefined {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (s.startsWith("high")) return "High Risk";
+  if (s.startsWith("mod") || s.startsWith("med")) return "Moderate Risk";
+  if (s.startsWith("low")) return "Low Risk";
+  return undefined;
+}
+
 /**
  * Parses and normalizes the model's JSON into a schema-valid ReportJson.
  * Returns null when the payload can't be salvaged so the caller falls back to
@@ -369,13 +464,22 @@ function coerceReport(raw: unknown): ReportJson | null {
   const severitySet = new Set<string>(SEVERITIES);
   const deviceSet = new Set<string>(DEVICES);
 
-  const issues = Array.isArray(obj.issues)
+  // Accept both our canonical keys and the leaner alias keys the spec uses
+  // (conversion_score, primary_bottleneck, flaws[], issue, suggested_fix,
+  // impact) so either output shape parses cleanly.
+  const rawIssues = Array.isArray(obj.issues)
     ? obj.issues
+    : Array.isArray(obj.flaws)
+      ? obj.flaws
+      : [];
+
+  const issues = Array.isArray(rawIssues)
+    ? rawIssues
         .map((i: any) => {
           if (!i || typeof i !== "object") return null;
           const severity: SeverityLevel = severitySet.has(i.severity)
             ? i.severity
-            : "MEDIUM";
+            : impactToSeverity(i.impact);
           let annotation = null;
           if (
             i.annotation &&
@@ -390,16 +494,31 @@ function coerceReport(raw: unknown): ReportJson | null {
               y: Math.max(0, Math.min(1, i.annotation.y)),
             };
           }
+          const psychology = String(
+            i.psychology ?? i.psychology_why_it_fails ?? i.whyItMatters ?? ""
+          );
+          const description = String(
+            i.description ?? i.issue_discovered ?? i.issue ?? ""
+          );
           return {
-            category: String(i.category ?? "General"),
-            title: String(i.title ?? "Issue"),
-            description: String(i.description ?? ""),
-            whyItMatters: String(i.whyItMatters ?? ""),
+            category: String(i.category ?? i.pillar ?? "General"),
+            title: String(i.title ?? i.element ?? i.issue ?? "Issue"),
+            description,
+            // No dedicated "why it matters" field in the rulebook schema — the
+            // psychology explanation carries that meaning.
+            whyItMatters: String(i.whyItMatters ?? psychology ?? ""),
+            psychology,
             severity,
             confidence: clampInt(i.confidence, 0, 100, 70),
             businessImpact: String(i.businessImpact ?? ""),
-            suggestedFix: String(i.suggestedFix ?? ""),
-            estimatedConversionImpact: String(i.estimatedConversionImpact ?? "n/a"),
+            suggestedFix: String(
+              i.suggestedFix ?? i.actionable_fix ?? i.suggested_fix ?? ""
+            ),
+            estimatedConversionImpact: String(
+              i.estimatedConversionImpact ?? i.estimated_conversion_impact ?? "n/a"
+            ),
+            complexity: normalizeComplexity(i.complexity),
+            riskOfDiy: normalizeDiyRisk(i.riskOfDiy ?? i.risk_of_diy),
             annotation,
           };
         })
@@ -426,7 +545,10 @@ function coerceReport(raw: unknown): ReportJson | null {
     : "medium";
 
   const candidate = {
-    overallScore: clampInt(obj.overallScore, 0, 100, 60),
+    overallScore: clampInt(obj.overallScore ?? obj.conversion_score, 0, 100, 60),
+    primaryBottleneck: String(
+      obj.primaryBottleneck ?? obj.primary_bottleneck ?? ""
+    ),
     categoryScores,
     summary: String(obj.summary ?? ""),
     strengths: toStringArray(obj.strengths),

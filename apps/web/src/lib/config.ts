@@ -1,4 +1,4 @@
-const company = process.env.NEXT_PUBLIC_COMPANY ?? "Spiralyze LLC";
+const company = process.env.NEXT_PUBLIC_COMPANY ?? "Spiralyze";
 const brandName = process.env.NEXT_PUBLIC_BRAND_NAME ?? "Spiralyze";
 
 export const config = {
@@ -23,6 +23,9 @@ export const config = {
   contactEmail: process.env.NEXT_PUBLIC_CONTACT_EMAIL ?? "contact@spiralyze.com",
   phone: process.env.NEXT_PUBLIC_PHONE ?? "888.677.4725",
   phoneHref: `tel:${(process.env.NEXT_PUBLIC_PHONE ?? "888.677.4725").replace(/[^0-9]/g, "")}`,
+  linkedinUrl:
+    process.env.NEXT_PUBLIC_LINKEDIN_URL ??
+    "https://www.linkedin.com/company/spiralyze",
   address: {
     line1: process.env.NEXT_PUBLIC_ADDRESS_LINE1 ?? "1718 Peachtree St. #1080",
     city: process.env.NEXT_PUBLIC_ADDRESS_CITY ?? "Atlanta, GA 30309",

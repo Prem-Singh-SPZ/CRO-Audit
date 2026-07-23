@@ -2,11 +2,12 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Download, FileJson, Plus } from "lucide-react";
+import { Download, FileJson, Zap } from "lucide-react";
 
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
+import { scrollToBooking } from "@/lib/report-ui";
 import type { ReportResponse } from "@/lib/types";
 
 export function ReportHeader({ data }: { data: ReportResponse }) {
@@ -48,11 +49,22 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
             <Download className="h-4 w-4" />
             PDF
           </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link href="/#analyze">
-              <Plus className="h-4 w-4" />
-              <span className="hidden sm:inline">Analyze another</span>
-            </Link>
+          {/* Demoted to a low-contrast text link — keep focus on fixing THIS page */}
+          <Link
+            href="/#analyze"
+            className="hidden text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline sm:inline"
+          >
+            Analyze another
+          </Link>
+          {/* Primary conversion action: high-contrast amber, scrolls to booking */}
+          <Button
+            type="button"
+            size="sm"
+            onClick={scrollToBooking}
+            className="bg-amber-500 font-semibold text-white shadow-sm shadow-amber-500/25 hover:bg-amber-600 hover:shadow-amber-500/40"
+          >
+            <Zap className="h-4 w-4" />
+            Fix My Page
           </Button>
           <ThemeToggle />
         </div>

@@ -603,8 +603,30 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
   const impactLow = clamp(6 + criticalCount * 4 + highCount * 3, 0, 40);
   const impactHigh = clamp(impactLow + 8 + criticalCount * 3, 0, 60);
 
+  // Align the heuristic fallback with the lead-gen funnel: derive DIY
+  // deterrents from severity and gate the fix behind a booking teaser so the
+  // UI looks identical whether or not a live LLM key is configured.
+  for (const i of issues) {
+    const heavy = i.severity === "CRITICAL" || i.severity === "HIGH";
+    i.complexity = heavy ? "High" : i.severity === "MEDIUM" ? "Medium" : "Low";
+    i.riskOfDiy = heavy
+      ? "High Risk"
+      : i.severity === "MEDIUM"
+        ? "Moderate Risk"
+        : "Low Risk";
+    i.suggestedFix = `Requires custom ${i.category.toLowerCase()} redesign. We have prepared a mock-up template for this. [Book a call to view your custom template].`;
+  }
+
+  const topIssue = [...issues].sort(
+    (a, b) => severityImpact[b.severity] - severityImpact[a.severity]
+  )[0];
+  const primaryBottleneck = topIssue
+    ? `${topIssue.title} — ${truncate(topIssue.description, 120)}`
+    : "No single dominant blocker — focus on the prioritized quick wins below.";
+
   const report: ReportJson = {
     overallScore,
+    primaryBottleneck,
     categoryScores: scores,
     summary: buildSummary(ctx, overallScore, criticalCount, highCount),
     strengths: strengths.slice(0, 8),
@@ -653,6 +675,7 @@ function buildBlockedReport(
 
   const report: ReportJson = {
     overallScore: neutral,
+    primaryBottleneck: `Automated analysis was blocked by bot protection (${reason}) — the real page could not be read.`,
     categoryScores: scores,
     summary: `${host} could not be fully analyzed automatically because it served a verification / bot-protection page (${reason}). The scores below are neutral placeholders — request a manual review or allowlist our crawler for an accurate CRO audit.`,
     strengths: [

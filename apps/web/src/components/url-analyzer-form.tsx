@@ -2,8 +2,15 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
-import { ArrowRight, Loader2, Search, Sparkles } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  ArrowRight,
+  ChevronDown,
+  Loader2,
+  Search,
+  Sparkles,
+  SlidersHorizontal,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -17,6 +24,10 @@ export function UrlAnalyzerForm({ className }: { className?: string }) {
   const [url, setUrl] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [showContext, setShowContext] = React.useState(false);
+  const [targetAudience, setTargetAudience] = React.useState("");
+  const [coreProduct, setCoreProduct] = React.useState("");
+  const [primaryTrafficSource, setPrimaryTrafficSource] = React.useState("");
 
   async function submit(value: string) {
     const trimmed = value.trim();
@@ -30,7 +41,12 @@ export function UrlAnalyzerForm({ className }: { className?: string }) {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: trimmed }),
+        body: JSON.stringify({
+          url: trimmed,
+          targetAudience: targetAudience.trim() || undefined,
+          coreProduct: coreProduct.trim() || undefined,
+          primaryTrafficSource: primaryTrafficSource.trim() || undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -91,6 +107,65 @@ export function UrlAnalyzerForm({ className }: { className?: string }) {
             )}
           </Button>
         </div>
+
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => setShowContext((v) => !v)}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Add context for a sharper audit
+            <span className="text-xs text-muted-foreground/70">(optional)</span>
+            <ChevronDown
+              className={cn(
+                "h-4 w-4 transition-transform",
+                showContext && "rotate-180"
+              )}
+            />
+          </button>
+
+          <AnimatePresence initial={false}>
+            {showContext && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.22 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-3 grid gap-3 rounded-2xl border bg-background/50 p-4 text-left sm:grid-cols-3">
+                  <ContextField
+                    label="Target audience"
+                    placeholder="e.g. B2B SaaS founders"
+                    value={targetAudience}
+                    onChange={setTargetAudience}
+                    disabled={loading}
+                  />
+                  <ContextField
+                    label="Core product / service"
+                    placeholder="e.g. AI invoicing tool"
+                    value={coreProduct}
+                    onChange={setCoreProduct}
+                    disabled={loading}
+                  />
+                  <ContextField
+                    label="Primary traffic source"
+                    placeholder="e.g. Google Ads, LinkedIn"
+                    value={primaryTrafficSource}
+                    onChange={setPrimaryTrafficSource}
+                    disabled={loading}
+                  />
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  We use this to judge message-match and relevance — not just
+                  generic best practice.
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </form>
 
       {error ? (
@@ -132,5 +207,34 @@ export function UrlAnalyzerForm({ className }: { className?: string }) {
         </div>
       )}
     </div>
+  );
+}
+
+function ContextField({
+  label,
+  placeholder,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  placeholder: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        disabled={disabled}
+        maxLength={300}
+        className="h-10 w-full rounded-xl border bg-background px-3 text-sm outline-none transition-colors focus:ring-2 focus:ring-primary/40 disabled:opacity-60"
+      />
+    </label>
   );
 }

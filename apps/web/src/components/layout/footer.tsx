@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Mail, Phone, MapPin } from "lucide-react";
+import { Mail, Phone, MapPin, Linkedin } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { config } from "@/lib/config";
 
@@ -13,6 +13,15 @@ export function Footer() {
             <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
               {config.footerDescription}
             </p>
+            <Link
+              href={config.linkedinUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`${config.company} on LinkedIn`}
+              className="mt-5 inline-flex h-9 w-9 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+            >
+              <Linkedin className="h-4 w-4" />
+            </Link>
           </div>
           <div>
             <h4 className="text-sm font-semibold">Get in touch</h4>

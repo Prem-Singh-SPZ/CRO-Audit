@@ -2,10 +2,10 @@
 
 import * as React from "react";
 import { motion } from "framer-motion";
-import { Globe, Calendar, Gauge, TrendingUp } from "lucide-react";
+import { Globe, Calendar, Gauge, TrendingUp, AlertTriangle } from "lucide-react";
 
 import type { ReportResponse } from "@/lib/types";
-import { SEVERITY_META, PRIORITY_META } from "@/lib/report-ui";
+import { SEVERITY_META, PRIORITY_META, BOOKING_ANCHOR_ID } from "@/lib/report-ui";
 import { formatDate } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,17 +20,21 @@ import { IssuesExplorer } from "./issues-explorer";
 import { RecommendationCards } from "./recommendation-cards";
 import { AgencyCta } from "./agency-cta";
 import { ReportHeader } from "./report-header";
-import { FloatingContact } from "@/components/contact/floating-contact";
+import { ConversionImpactPanel } from "./conversion-impact-panel";
 import type { ContactContext } from "@/components/contact/types";
 
 export function ReportView({
   data,
   readOnly = false,
+  mockupPending = false,
 }: {
   data: ReportResponse;
   readOnly?: boolean;
+  mockupPending?: boolean;
 }) {
   const { scan, report, issues, recommendations, screenshots, lighthouse } = data;
+  // `mockups` was added later; default so older/shared payloads still render.
+  const mockups = data.mockups ?? [];
   const host = safeHost(scan.url);
 
   const contactContext: ContactContext = {
@@ -54,7 +58,8 @@ export function ReportView({
         <ReportHeader data={data} />
       )}
 
-      <main className="container mt-10 space-y-10">
+      <main className="container mt-10">
+        <div className="space-y-10">
         {/* Summary hero */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
@@ -94,8 +99,25 @@ export function ReportView({
             <p className="mt-3 leading-relaxed text-muted-foreground">
               {report.summary}
             </p>
+            {report.primaryBottleneck && (
+              <div className="mt-4 flex items-start gap-3 rounded-xl border border-destructive/20 bg-destructive/5 p-3.5">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-destructive">
+                    Primary bottleneck
+                  </p>
+                  <p className="mt-1 text-sm leading-relaxed text-foreground/90">
+                    {report.primaryBottleneck}
+                  </p>
+                </div>
+              </div>
+            )}
           </Card>
         </motion.div>
+
+        {/* Evidence-based conversion snapshot — real audit counts + measured
+            page speed framed against Google's published research. */}
+        <ConversionImpactPanel issues={issues} lighthouse={lighthouse} />
 
         {/* Detailed tabs — screenshots first when available, else categories */}
         <Tabs
@@ -124,6 +146,8 @@ export function ReportView({
                   <AnnotatedScreenshots
                     screenshots={screenshots}
                     issues={issues}
+                    mockups={mockups}
+                    mockupPending={mockupPending}
                   />
                 </CardContent>
               </Card>
@@ -220,12 +244,13 @@ export function ReportView({
               })}
             </CardContent>
           </Card>
+          </div>
         </div>
 
-        <AgencyCta context={contactContext} />
+        <div id={BOOKING_ANCHOR_ID} className="mt-12 scroll-mt-24">
+          <AgencyCta context={contactContext} />
+        </div>
       </main>
-
-      <FloatingContact context={contactContext} />
     </div>
   );
 }

@@ -63,6 +63,12 @@ export interface PageContext {
   fonts: string[];
   colors: string[];
   wordCount: number;
+  /**
+   * Cleaned, visible page copy (scripts/styles/nav chrome stripped, whitespace
+   * collapsed, truncated). Gives the model the raw wording to critique instead
+   * of only structural signals.
+   */
+  copyText: string;
   hasTestimonials: boolean;
   hasPricing: boolean;
   hasTrustBadges: boolean;

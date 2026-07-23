@@ -6,12 +6,15 @@ import { Loader2, SearchX } from "lucide-react";
 
 import { ReportView } from "@/components/report/report-view";
 import { Button } from "@/components/ui/button";
-import { REPORT_STORAGE_KEY } from "@/lib/report-store";
-import type { ReportResponse } from "@/lib/types";
+import { REPORT_STORAGE_KEY, storeReport } from "@/lib/report-store";
+import type { MockupResponseDto, ReportResponse } from "@/lib/types";
 
 export default function ReportPage() {
   const [data, setData] = React.useState<ReportResponse | null>(null);
   const [ready, setReady] = React.useState(false);
+  const [mockupPending, setMockupPending] = React.useState(false);
+  // Guards the one-shot background mockup fetch against React's dev double-run.
+  const mockupRequested = React.useRef(false);
 
   React.useEffect(() => {
     try {
@@ -22,6 +25,54 @@ export default function ReportPage() {
     }
     setReady(true);
   }, []);
+
+  // Fetch the "after" concept out-of-band once the core report is on screen,
+  // then merge it in and persist so a refresh doesn't regenerate it.
+  React.useEffect(() => {
+    if (!data || mockupRequested.current) return;
+    if (!data.mockupSeed || data.mockups.length > 0) return;
+    mockupRequested.current = true;
+
+    const controller = new AbortController();
+    setMockupPending(true);
+
+    (async () => {
+      try {
+        const res = await fetch("/api/mockup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            image: data.mockupSeed!.image,
+            mimeType: data.mockupSeed!.mimeType,
+            host: safeHost(data.scan.url),
+            primaryBottleneck: data.report.primaryBottleneck || undefined,
+            issues: data.issues.map((i) => ({
+              severity: i.severity,
+              category: i.category,
+              title: i.title,
+              description: i.description,
+            })),
+          }),
+        });
+        const json = (await res.json()) as MockupResponseDto;
+        if (json.mockup) {
+          setData((prev) => {
+            if (!prev) return prev;
+            const next = { ...prev, mockups: [json.mockup!] };
+            storeReport(next);
+            return next;
+          });
+        }
+      } catch {
+        // Best-effort — the report is fully usable without the mockup.
+      } finally {
+        setMockupPending(false);
+      }
+    })();
+
+    return () => controller.abort();
+  }, [data]);
 
   if (!ready) {
     return (
@@ -51,5 +102,13 @@ export default function ReportPage() {
     );
   }
 
-  return <ReportView data={data} />;
+  return <ReportView data={data} mockupPending={mockupPending} />;
+}
+
+function safeHost(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }

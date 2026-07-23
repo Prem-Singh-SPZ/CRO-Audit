@@ -2,11 +2,27 @@
 
 import * as React from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronDown, TrendingUp, Target, Wrench, Info } from "lucide-react";
+import {
+  ChevronDown,
+  TrendingUp,
+  Target,
+  Info,
+  Brain,
+  Lock,
+  Wrench,
+  AlertTriangle,
+  CalendarClock,
+} from "lucide-react";
 
 import type { IssueDto } from "@/lib/types";
-import { SEVERITY_META } from "@/lib/report-ui";
+import {
+  SEVERITY_META,
+  COMPLEXITY_META,
+  DIY_RISK_META,
+  scrollToBooking,
+} from "@/lib/report-ui";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export function IssueCard({ issue }: { issue: IssueDto }) {
@@ -14,7 +30,12 @@ export function IssueCard({ issue }: { issue: IssueDto }) {
   const meta = SEVERITY_META[issue.severity];
 
   return (
-    <div className="card-premium overflow-hidden">
+    <div
+      className={cn(
+        "card-premium overflow-hidden border-l-4",
+        meta.accent
+      )}
+    >
       <button
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-start gap-4 p-5 text-left"
@@ -23,6 +44,18 @@ export function IssueCard({ issue }: { issue: IssueDto }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Badge className={meta.badge}>{meta.label}</Badge>
+            {issue.complexity && (
+              <Badge className={cn("gap-1", COMPLEXITY_META[issue.complexity].badge)}>
+                <Wrench className="h-3 w-3" />
+                {COMPLEXITY_META[issue.complexity].label}
+              </Badge>
+            )}
+            {issue.riskOfDiy && (
+              <Badge className={cn("gap-1", DIY_RISK_META[issue.riskOfDiy].badge)}>
+                <AlertTriangle className="h-3 w-3" />
+                {DIY_RISK_META[issue.riskOfDiy].label}
+              </Badge>
+            )}
             <span className="text-xs text-muted-foreground">{issue.category}</span>
           </div>
           <h3 className="mt-1.5 font-semibold">{issue.title}</h3>
@@ -54,18 +87,20 @@ export function IssueCard({ issue }: { issue: IssueDto }) {
             className="overflow-hidden"
           >
             <div className="space-y-4 border-t px-5 py-5">
+              {issue.psychology && (
+                <Detail
+                  icon={Brain}
+                  title="Psychology — why users leave"
+                  text={issue.psychology}
+                />
+              )}
               <Detail icon={Info} title="Why it matters" text={issue.whyItMatters} />
               <Detail
                 icon={Target}
                 title="Business impact"
                 text={issue.businessImpact}
               />
-              <Detail
-                icon={Wrench}
-                title="Suggested fix"
-                text={issue.suggestedFix}
-                highlight
-              />
+              <GatedFix text={issue.suggestedFix} />
               <div className="flex items-center gap-4 pt-1 text-xs text-muted-foreground">
                 <span>Confidence: {issue.confidence}%</span>
                 {issue.device && <span>Device: {issue.device}</span>}
@@ -74,6 +109,34 @@ export function IssueCard({ issue }: { issue: IssueDto }) {
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+// Renders the gated "fix" teaser: the strategic diagnosis stays visible, but
+// the step-by-step implementation is locked behind a booking CTA.
+function GatedFix({ text }: { text: string }) {
+  // Drop any inline "[Book a call ...]" marker — we render a real button.
+  const teaser = text.replace(/\[[^\]]*\]/g, "").trim();
+
+  return (
+    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3.5">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+        <Lock className="h-3.5 w-3.5" />
+        Recommended fix
+      </div>
+      <p className="mt-1.5 text-sm leading-relaxed">
+        {teaser || "Requires custom UX/copywriting redesign. We have prepared a mock-up template for this."}
+      </p>
+      <Button
+        type="button"
+        size="sm"
+        onClick={scrollToBooking}
+        className="mt-3 bg-amber-500 text-white hover:bg-amber-600"
+      >
+        <CalendarClock className="h-4 w-4" />
+        Book a call to view your custom template
+      </Button>
     </div>
   );
 }

@@ -137,6 +137,19 @@ export async function analyzePage(url: string): Promise<PageContext> {
   const bodyText = $("body").text().replace(/\s+/g, " ").trim();
   const wordCount = bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0;
 
+  // Raw, visible copy for the model to critique. Clone the body, drop
+  // non-content nodes, then flatten to whitespace-collapsed text (truncated so
+  // the prompt stays lean).
+  const $copy = cheerio.load(html);
+  $copy(
+    "script, style, noscript, template, svg, iframe, [aria-hidden='true']"
+  ).remove();
+  const copyText = $copy("body")
+    .text()
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 6000);
+
   // Fonts + colors (best-effort from inline styles + style tags)
   const styleBlob = `${$("style").text()} ${$("[style]")
     .map((_, el) => $(el).attr("style") ?? "")
@@ -200,6 +213,7 @@ export async function analyzePage(url: string): Promise<PageContext> {
     fonts,
     colors,
     wordCount,
+    copyText,
     hasTestimonials,
     hasPricing,
     hasTrustBadges,
@@ -235,6 +249,7 @@ function buildEmptyContext(
     fonts: [],
     colors: [],
     wordCount: 0,
+    copyText: "",
     hasTestimonials: false,
     hasPricing: false,
     hasTrustBadges: false,

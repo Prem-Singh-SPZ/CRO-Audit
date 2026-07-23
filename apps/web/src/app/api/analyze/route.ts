@@ -31,6 +31,11 @@ export async function POST(request: Request) {
   }
 
   const url = parsed.data.url;
+  const auditContext = {
+    targetAudience: parsed.data.targetAudience,
+    coreProduct: parsed.data.coreProduct,
+    primaryTrafficSource: parsed.data.primaryTrafficSource,
+  };
 
   try {
     // Crawl (cheerio), PageSpeed metrics, and screenshots run in parallel.
@@ -40,12 +45,14 @@ export async function POST(request: Request) {
       captureScreenshots(url),
     ]);
     const screenshots = screenshotResult.screenshots;
+    const heroShot = screenshotResult.heroShot;
 
     const lighthouse = pageSpeed.lighthouse ?? fallbackLighthouse(pageContext);
     const { report, provider } = await generateReport({
       pageContext,
       lighthouse,
       screenshots,
+      auditContext,
     });
 
     const now = new Date().toISOString();
@@ -66,6 +73,7 @@ export async function POST(request: Request) {
       report: {
         id: randomUUID(),
         overallScore: report.overallScore,
+        primaryBottleneck: report.primaryBottleneck ?? "",
         categoryScores: report.categoryScores,
         summary: report.summary,
         strengths: report.strengths,
@@ -81,11 +89,14 @@ export async function POST(request: Request) {
         title: i.title,
         description: i.description,
         whyItMatters: i.whyItMatters,
+        psychology: i.psychology || i.whyItMatters,
         severity: i.severity,
         confidence: i.confidence,
         businessImpact: i.businessImpact,
         suggestedFix: i.suggestedFix,
         estimatedConversionImpact: i.estimatedConversionImpact,
+        complexity: i.complexity ?? null,
+        riskOfDiy: i.riskOfDiy ?? null,
         device: i.annotation?.device ?? null,
         annotationX: i.annotation?.x ?? null,
         annotationY: i.annotation?.y ?? null,
@@ -105,6 +116,12 @@ export async function POST(request: Request) {
         width: s.width,
         height: s.height,
       })),
+      // The "after" mockup is generated out-of-band by /api/mockup (see the
+      // report page) so the slow image model never blocks this audit request.
+      mockups: [],
+      mockupSeed: heroShot
+        ? { image: heroShot.base64, mimeType: heroShot.mimeType }
+        : null,
       lighthouse: {
         performance: lighthouse.performance,
         accessibility: lighthouse.accessibility,

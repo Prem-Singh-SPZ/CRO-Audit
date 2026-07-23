@@ -17,6 +17,10 @@ export interface Screenshot {
 
 export interface ScreenshotResult {
   screenshots: Screenshot[];
+  // A lightweight above-the-fold (viewport-sized) capture used as the seed for
+  // the deferred "after" mockup. Kept small so it can round-trip to the client
+  // and back up to the mockup endpoint without hitting request-body limits.
+  heroShot: Screenshot | null;
   // Set when the renderer was served a bot-protection / verification wall
   // instead of the real page. The HTML analysis may still be valid.
   blockedReason: string | null;
@@ -26,10 +30,37 @@ const DESKTOP_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
 const VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 1 } as const;
-// Bound the in-memory image (and the sessionStorage payload) for very tall
-// pages by clipping the capture height.
-const MAX_HEIGHT = 12000;
+// Bound the in-memory image by clipping the capture height. This caps three
+// things that scale with page height: (1) the vision-LLM latency — a very tall
+// screenshot pushes Gemini toward its request timeout and can blow the whole
+// analyze budget; (2) the sessionStorage payload the report page round-trips;
+// (3) the raw capture/encode time. ~5 screenfuls is plenty to audit the parts
+// of a page that actually drive conversion.
+const MAX_HEIGHT = 5000;
 const NAV_TIMEOUT_MS = 30_000;
+// Per-operation ceilings. A page whose main thread is pegged by heavy scripts
+// (analytics, A/B tools, chat widgets) can make even `page.title()` /
+// `page.evaluate()` / `page.screenshot()` hang forever — the CDP call queues
+// behind the busy JS thread and never resolves, and `.catch()` does NOT rescue
+// a hang (only a rejection). We therefore race every page op against a timeout
+// so a stuck page degrades to "no screenshot" instead of hanging the request.
+const PAGE_OP_TIMEOUT_MS = 6_000;
+const SCREENSHOT_TIMEOUT_MS = 20_000;
+
+/**
+ * Resolves to `fallback` if `p` doesn't settle within `ms`. The losing promise
+ * is allowed to reject harmlessly in the background (browser close aborts it).
+ */
+function raceTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const guard = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  return Promise.race([
+    p.catch(() => fallback),
+    guard,
+  ]).finally(() => clearTimeout(timer));
+}
 
 async function launchBrowser(): Promise<Browser> {
   // Local dev: point at an installed Chrome/Edge. The serverless Chromium args
@@ -64,6 +95,7 @@ async function launchBrowser(): Promise<Browser> {
  */
 export async function captureScreenshots(url: string): Promise<ScreenshotResult> {
   const screenshots: Screenshot[] = [];
+  let heroShot: Screenshot | null = null;
   let blockedReason: string | null = null;
   let browser: Browser | null = null;
 
@@ -72,59 +104,132 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
     const page = await browser.newPage();
     await page.setUserAgent(DESKTOP_UA);
     page.setDefaultNavigationTimeout(NAV_TIMEOUT_MS);
+    // Auto-dismiss any JS dialog (alert/confirm/beforeunload). An open dialog
+    // blocks the page's main thread, which would otherwise freeze every
+    // subsequent CDP call (title/evaluate/screenshot) until it times out.
+    page.on("dialog", (d) => {
+      d.dismiss().catch(() => {});
+    });
 
     let status = 0;
     try {
-      const response = await page.goto(url, { waitUntil: "networkidle2" });
+      // Wait only for the DOM, not full network idle: heavy marketing pages
+      // (analytics, chat widgets, A/B tools, video) often never reach
+      // networkidle2, which would otherwise time out the whole navigation and
+      // leave us with nothing to capture.
+      const response = await page.goto(url, {
+        waitUntil: "domcontentloaded",
+      });
       status = response?.status() ?? 0;
-    } catch {
+    } catch (err) {
       // Navigation timed out or aborted — capture whatever rendered anyway.
+      console.warn("[screenshot] navigation issue (continuing):", err);
     }
 
+    // Best-effort: give the network a brief chance to settle so late hero
+    // content/images load, but never block on it (bounded + swallowed).
+    await page
+      .waitForNetworkIdle({ idleTime: 500, timeout: 8000 })
+      .catch(() => {});
     // Let late-loading hero animations / lazy content settle.
     await new Promise((r) => setTimeout(r, 1500));
 
     // Detect bot walls from the rendered page before trusting the screenshot.
-    const title = await page.title().catch(() => "");
-    const bodySample = await page
-      .evaluate(() => document.body?.innerText?.slice(0, 600) ?? "")
-      .catch(() => "");
+    // Time-bounded: on a pegged page these can hang indefinitely, so we cap
+    // them and simply skip challenge detection if they don't return in time.
+    const title = await raceTimeout(page.title(), PAGE_OP_TIMEOUT_MS, "");
+    const bodySample = await raceTimeout(
+      page.evaluate(() => document.body?.innerText?.slice(0, 600) ?? ""),
+      PAGE_OP_TIMEOUT_MS,
+      ""
+    );
     const challenge = detectChallenge(`${title} ${bodySample}`);
     if (challenge) {
       blockedReason = challenge;
-    } else if (status >= 400) {
+    } else if (status >= 400 && !bodySample.trim()) {
+      // Only treat an error status as a hard block when the page also failed to
+      // render any real content. A 4xx that still paints usable content (some
+      // WAFs/CDNs do this) should not cost us the screenshot.
       blockedReason = status === 403 || status === 429 ? "WAF block" : `HTTP ${status}`;
     }
 
-    if (!blockedReason) {
-      const dims = await page.evaluate(() => ({
-        width: document.documentElement.scrollWidth,
-        height: document.documentElement.scrollHeight,
-      }));
-      const width = dims.width || VIEWPORT.width;
-      const clipped = dims.height > MAX_HEIGHT;
-      const height = clipped ? MAX_HEIGHT : dims.height || VIEWPORT.height;
+    if (blockedReason) {
+      console.warn(
+        `[screenshot] skipping capture for ${url} — reason: ${blockedReason} (status ${status})`
+      );
+    }
 
-      const raw = await page.screenshot(
-        clipped
-          ? {
-              type: "jpeg",
-              quality: 80,
-              clip: { x: 0, y: 0, width, height, scale: 1 },
-              captureBeyondViewport: true,
-            }
-          : { type: "jpeg", quality: 80, fullPage: true }
+    if (!blockedReason) {
+      // Read the page dimensions defensively: a client-side redirect can destroy
+      // the execution context here, and we must not let that drop the capture.
+      const dims = await raceTimeout(
+        page.evaluate(() => ({
+          width: document.documentElement.scrollWidth,
+          height: document.documentElement.scrollHeight,
+        })),
+        PAGE_OP_TIMEOUT_MS,
+        { width: 0, height: 0 }
+      );
+      const width = dims.width || VIEWPORT.width;
+      // Always capture with an explicit, bounded clip via captureBeyondViewport
+      // — never `fullPage: true`. fullPage forces Chromium to resize the
+      // viewport to the ENTIRE content height, which can hang indefinitely on
+      // very tall, lazy-loading, or continuously-reflowing pages. A fixed clip
+      // (capped at MAX_HEIGHT, and falling back to one viewport when the page
+      // height is unknown) keeps capture fast and predictable.
+      const height = Math.min(dims.height || VIEWPORT.height, MAX_HEIGHT);
+
+      const raw = await raceTimeout<Buffer | Uint8Array | null>(
+        page.screenshot({
+          type: "jpeg",
+          quality: 80,
+          clip: { x: 0, y: 0, width, height, scale: 1 },
+          captureBeyondViewport: true,
+        }),
+        SCREENSHOT_TIMEOUT_MS,
+        null
       );
 
-      const base64 = Buffer.from(raw).toString("base64");
-      screenshots.push({
-        device: "desktop",
-        base64,
-        mimeType: "image/jpeg",
-        dataUri: `data:image/jpeg;base64,${base64}`,
-        width,
-        height,
-      });
+      if (raw) {
+        const base64 = Buffer.from(raw).toString("base64");
+        screenshots.push({
+          device: "desktop",
+          base64,
+          mimeType: "image/jpeg",
+          dataUri: `data:image/jpeg;base64,${base64}`,
+          width,
+          height,
+        });
+      }
+
+      // Above-the-fold seed for the deferred mockup: a single viewport-sized
+      // frame (top of page) keeps the payload small and gives the image model
+      // a crisp, focused reference to redesign. Also time-bounded so a pegged
+      // page can't hang here after we've already captured the main screenshot.
+      try {
+        await raceTimeout(
+          page.evaluate(() => window.scrollTo(0, 0)),
+          PAGE_OP_TIMEOUT_MS,
+          undefined
+        );
+        const heroRaw = await raceTimeout<Buffer | Uint8Array | null>(
+          page.screenshot({ type: "jpeg", quality: 82, fullPage: false }),
+          SCREENSHOT_TIMEOUT_MS,
+          null
+        );
+        if (!heroRaw) throw new Error("hero capture timed out");
+        const heroBase64 = Buffer.from(heroRaw).toString("base64");
+        heroShot = {
+          device: "desktop",
+          base64: heroBase64,
+          mimeType: "image/jpeg",
+          dataUri: `data:image/jpeg;base64,${heroBase64}`,
+          width: VIEWPORT.width,
+          height: VIEWPORT.height,
+        };
+      } catch {
+        // Non-fatal — the report still works without the mockup seed.
+      }
     }
   } catch (err) {
     console.error("[screenshot] capture failed:", err);
@@ -132,5 +237,5 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
     if (browser) await browser.close().catch(() => {});
   }
 
-  return { screenshots, blockedReason };
+  return { screenshots, heroShot, blockedReason };
 }

@@ -15,6 +15,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { config } from "@/lib/config";
+import { cn } from "@/lib/utils";
 import type { ContactContext } from "@/components/contact/types";
 
 const STATS = [
@@ -32,6 +33,7 @@ const VALUE_PROPS = [
 ];
 
 export function AgencyCta({
+  context,
   title = "Don't just read the report — fix it and grow revenue",
   description = `${config.brandName} turns audits like this into measurable conversion lifts. Get a tailored plan and we'll implement the highest-impact fixes for you.`,
 }: {
@@ -39,6 +41,9 @@ export function AgencyCta({
   title?: string;
   description?: string;
 }) {
+  const score = context?.score;
+  const hasScore = typeof score === "number" && Number.isFinite(score);
+
   return (
     <motion.section
       id="contact"
@@ -62,7 +67,29 @@ export function AgencyCta({
         <h2 className="mt-4 text-balance text-2xl font-semibold tracking-tight sm:text-3xl">
           {title}
         </h2>
-        <p className="mt-3 text-balance text-muted-foreground">{description}</p>
+
+        {hasScore ? (
+          <p className="mx-auto mt-4 max-w-xl text-balance text-base leading-relaxed text-foreground/90">
+            Your page scored a{" "}
+            <span
+              className={cn(
+                "font-bold",
+                score! >= 80
+                  ? "text-success"
+                  : score! >= 60
+                    ? "text-warning"
+                    : "text-destructive"
+              )}
+            >
+              {score}/100
+            </span>
+            . Fixing these high-impact bottlenecks requires expert UX and
+            copywriting strategy. Let&rsquo;s execute these fixes together—book
+            your 15-minute strategy session now.
+          </p>
+        ) : (
+          <p className="mt-3 text-balance text-muted-foreground">{description}</p>
+        )}
 
         {/* Social proof stats */}
         <div className="mt-8 grid grid-cols-3 gap-3">
@@ -86,7 +113,7 @@ export function AgencyCta({
           <Button asChild variant="gradient" size="xl" className="w-full sm:w-auto">
             <Link href={config.bookCallUrl} target="_blank">
               <Sparkles className="h-4 w-4" />
-              Get a demo
+              {hasScore ? "Book my strategy session" : "Get a demo"}
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
