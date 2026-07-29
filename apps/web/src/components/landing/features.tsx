@@ -58,7 +58,7 @@ const FEATURES = [
     icon: FileDown,
     title: "Export & share",
     description:
-      "Download a PDF, export JSON, or share a live report link with stakeholders in one click.",
+      "Download a polished PDF or export the raw JSON to share your report with stakeholders in one click.",
   },
 ];
 

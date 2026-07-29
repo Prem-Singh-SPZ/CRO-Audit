@@ -15,7 +15,7 @@ const STEPS = [
     step: "02",
     title: "We crawl & capture",
     description:
-      "We fetch your page, capture mobile and desktop screenshots, and extract your content and structure.",
+      "We fetch your page, capture a full-page desktop screenshot, and extract your content and structure.",
   },
   {
     icon: Sparkles,
