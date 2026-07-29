@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 
 import { generateFixMockup } from "@/lib/mockup";
+import { getClientIp, rateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import type {
   MockupDto,
   MockupRequestDto,
@@ -15,7 +16,26 @@ export const dynamic = "force-dynamic";
 // crawl + PageSpeed + audit. Raise/lower per your Vercel plan's ceiling.
 export const maxDuration = 120;
 
+// Bound the inbound base64 image so a caller can't push huge payloads into
+// memory / the image API. ~3M chars of base64 ≈ 2.2MB binary, comfortably
+// above a viewport JPEG hero seed but far below an abuse payload.
+const MAX_IMAGE_BASE64_LEN = 3_000_000;
+
 export async function POST(request: Request) {
+  const { limit, windowMs } = RATE_LIMITS.mockup;
+  const rl = rateLimit(`mockup:${getClientIp(request)}`, limit, windowMs);
+  if (!rl.success) {
+    return NextResponse.json(
+      { error: "Too many requests. Please wait a moment and try again." },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(Math.max(1, Math.ceil((rl.reset - Date.now()) / 1000))),
+        },
+      }
+    );
+  }
+
   let body: Partial<MockupRequestDto>;
   try {
     body = (await request.json()) as Partial<MockupRequestDto>;
@@ -29,6 +49,20 @@ export async function POST(request: Request) {
 
   if (!image) {
     return NextResponse.json<MockupResponseDto>({ mockup: null });
+  }
+
+  if (image.length > MAX_IMAGE_BASE64_LEN) {
+    return NextResponse.json(
+      { error: "Image payload too large." },
+      { status: 413 }
+    );
+  }
+
+  if (!/^image\/(png|jpeg|jpg|webp)$/i.test(mimeType)) {
+    return NextResponse.json(
+      { error: "Unsupported image type." },
+      { status: 400 }
+    );
   }
 
   const issues = Array.isArray(body.issues)

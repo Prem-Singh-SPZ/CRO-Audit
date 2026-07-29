@@ -39,8 +39,12 @@ export function IssuesExplorer({ issues }: { issues: IssueDto[] }) {
     <div>
       <div className="mb-6 space-y-4">
         <div className="relative">
+          <label htmlFor="issue-search" className="sr-only">
+            Search issues
+          </label>
           <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
+            id="issue-search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search issues..."
@@ -110,6 +114,7 @@ function FilterChip({
   return (
     <button
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
         "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
         active

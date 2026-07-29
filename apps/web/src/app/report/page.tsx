@@ -6,13 +6,19 @@ import { Loader2, SearchX } from "lucide-react";
 
 import { ReportView } from "@/components/report/report-view";
 import { Button } from "@/components/ui/button";
-import { REPORT_STORAGE_KEY, storeReport } from "@/lib/report-store";
+import {
+  REPORT_STORAGE_KEY,
+  storeReport,
+  stripMockupSeed,
+} from "@/lib/report-store";
+import { safeHost } from "@/lib/utils";
 import type { MockupResponseDto, ReportResponse } from "@/lib/types";
 
 export default function ReportPage() {
   const [data, setData] = React.useState<ReportResponse | null>(null);
   const [ready, setReady] = React.useState(false);
   const [mockupPending, setMockupPending] = React.useState(false);
+  const [mockupError, setMockupError] = React.useState(false);
   // Guards the one-shot background mockup fetch against React's dev double-run.
   const mockupRequested = React.useRef(false);
 
@@ -55,17 +61,24 @@ export default function ReportPage() {
             })),
           }),
         });
+        if (!res.ok) throw new Error(`mockup HTTP ${res.status}`);
         const json = (await res.json()) as MockupResponseDto;
         if (json.mockup) {
           setData((prev) => {
             if (!prev) return prev;
-            const next = { ...prev, mockups: [json.mockup!] };
+            // Drop the now-consumed seed to reclaim sessionStorage space.
+            const next = stripMockupSeed({ ...prev, mockups: [json.mockup!] });
             storeReport(next);
             return next;
           });
+        } else {
+          // Endpoint intentionally returned no mockup (disabled / no key).
+          setMockupError(true);
         }
-      } catch {
-        // Best-effort — the report is fully usable without the mockup.
+      } catch (err) {
+        if (!(err instanceof DOMException && err.name === "AbortError")) {
+          setMockupError(true);
+        }
       } finally {
         setMockupPending(false);
       }
@@ -102,13 +115,11 @@ export default function ReportPage() {
     );
   }
 
-  return <ReportView data={data} mockupPending={mockupPending} />;
-}
-
-function safeHost(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
+  return (
+    <ReportView
+      data={data}
+      mockupPending={mockupPending}
+      mockupError={mockupError}
+    />
+  );
 }

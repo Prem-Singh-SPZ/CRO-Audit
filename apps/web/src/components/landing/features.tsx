@@ -3,7 +3,7 @@ import {
   Gauge,
   Brain,
   Target,
-  Smartphone,
+  Monitor,
   BarChart3,
   ShieldCheck,
   FileDown,
@@ -37,10 +37,10 @@ const FEATURES = [
       "Every issue ranked by business impact vs. implementation effort so you know exactly what to fix first.",
   },
   {
-    icon: Smartphone,
-    title: "Mobile + desktop",
+    icon: Monitor,
+    title: "Full-page desktop review",
     description:
-      "Separate screenshots and analysis for desktop, tablet, and mobile - where most conversions are won or lost.",
+      "A full-page desktop screenshot analyzed top to bottom - hero, mid-page, and footer - where conversions are won or lost.",
   },
   {
     icon: BarChart3,

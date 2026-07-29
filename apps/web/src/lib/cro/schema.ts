@@ -77,9 +77,9 @@ export const DIY_RISK_LEVELS = [
 export type DiyRiskLevel = (typeof DIY_RISK_LEVELS)[number];
 
 export const issueSchema = z.object({
-  category: z.string(),
-  title: z.string(),
-  description: z.string(),
+  category: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().min(1),
   whyItMatters: z.string(),
   // The conversion psychology — WHY users hesitate/leave because of this flaw.
   psychology: z.string().optional(),
@@ -120,7 +120,10 @@ export const reportSchema = z.object({
   primaryBottleneck: z.string().optional(),
   strengths: z.array(z.string()),
   weaknesses: z.array(z.string()),
-  issues: z.array(issueSchema),
+  // At least one issue must be present — an empty audit is never a valid report
+  // (a genuinely clean page still surfaces low-severity opportunities). This
+  // also forces a malformed/empty LLM payload to fall back to the heuristics.
+  issues: z.array(issueSchema).min(1),
   recommendations: z.array(recommendationSchema),
   priority: z.enum(["high", "medium", "low"]),
   confidence: z.number().int().min(0).max(100),

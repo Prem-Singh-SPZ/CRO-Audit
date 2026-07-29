@@ -2,6 +2,7 @@ import chromium from "@sparticuz/chromium";
 import puppeteer, { type Browser } from "puppeteer-core";
 
 import { detectChallenge } from "@/lib/challenge";
+import { assertSafeExternalUrl, isBlockedUrlSync } from "@/lib/net-guard";
 
 export interface Screenshot {
   device: "desktop" | "mobile";
@@ -15,6 +16,13 @@ export interface Screenshot {
   height: number;
 }
 
+// Lightweight signals read from the fully-rendered (post-JS) page. Used to
+// detect client-rendered SPAs where the static HTML crawl looks empty.
+export interface RenderedSignals {
+  textLength: number;
+  h1Count: number;
+}
+
 export interface ScreenshotResult {
   screenshots: Screenshot[];
   // A lightweight above-the-fold (viewport-sized) capture used as the seed for
@@ -24,6 +32,8 @@ export interface ScreenshotResult {
   // Set when the renderer was served a bot-protection / verification wall
   // instead of the real page. The HTML analysis may still be valid.
   blockedReason: string | null;
+  // Signals from the rendered DOM (null when capture failed/blocked).
+  rendered: RenderedSignals | null;
 }
 
 const DESKTOP_UA =
@@ -46,6 +56,50 @@ const NAV_TIMEOUT_MS = 30_000;
 // so a stuck page degrades to "no screenshot" instead of hanging the request.
 const PAGE_OP_TIMEOUT_MS = 6_000;
 const SCREENSHOT_TIMEOUT_MS = 20_000;
+
+// Cap concurrent Chromium instances so a burst of audits can't OOM the
+// function (each headless Chromium is memory-hungry). Requests beyond the cap
+// wait briefly for a slot; if none frees up they degrade to "no screenshot"
+// rather than piling up browsers. Tunable via env.
+const MAX_CONCURRENT_BROWSERS = Math.max(
+  1,
+  Number.parseInt(process.env.MAX_CONCURRENT_BROWSERS ?? "2", 10) || 2
+);
+const ACQUIRE_TIMEOUT_MS = 25_000;
+
+let activeBrowsers = 0;
+const waiters: (() => void)[] = [];
+
+function acquireSlot(): Promise<boolean> {
+  if (activeBrowsers < MAX_CONCURRENT_BROWSERS) {
+    activeBrowsers += 1;
+    return Promise.resolve(true);
+  }
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      const idx = waiters.indexOf(grant);
+      if (idx >= 0) waiters.splice(idx, 1);
+      resolve(false);
+    }, ACQUIRE_TIMEOUT_MS);
+    const grant = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      activeBrowsers += 1;
+      resolve(true);
+    };
+    waiters.push(grant);
+  });
+}
+
+function releaseSlot(): void {
+  activeBrowsers = Math.max(0, activeBrowsers - 1);
+  const next = waiters.shift();
+  if (next) next();
+}
 
 /**
  * Resolves to `fallback` if `p` doesn't settle within `ms`. The losing promise
@@ -97,13 +151,36 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
   const screenshots: Screenshot[] = [];
   let heroShot: Screenshot | null = null;
   let blockedReason: string | null = null;
+  let rendered: RenderedSignals | null = null;
   let browser: Browser | null = null;
+
+  // Bound concurrent Chromium instances. If we can't get a slot in time, skip
+  // the capture — the audit still runs on crawl + PageSpeed + text.
+  const acquired = await acquireSlot();
+  if (!acquired) {
+    console.warn("[screenshot] skipped — capture concurrency limit reached");
+    return { screenshots, heroShot: null, blockedReason: null, rendered: null };
+  }
 
   try {
     browser = await launchBrowser();
     const page = await browser.newPage();
     await page.setUserAgent(DESKTOP_UA);
     page.setDefaultNavigationTimeout(NAV_TIMEOUT_MS);
+
+    // SSRF guard for the browser: abort any request (including redirects and
+    // subresources) that targets a disallowed scheme, internal host, or
+    // private/reserved IP literal. The primary target's DNS is already checked
+    // upstream via assertSafeExternalUrl.
+    await page.setRequestInterception(true);
+    page.on("request", (req) => {
+      if (isBlockedUrlSync(req.url())) {
+        req.abort().catch(() => {});
+      } else {
+        req.continue().catch(() => {});
+      }
+    });
+
     // Auto-dismiss any JS dialog (alert/confirm/beforeunload). An open dialog
     // blocks the page's main thread, which would otherwise freeze every
     // subsequent CDP call (title/evaluate/screenshot) until it times out.
@@ -143,10 +220,21 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
       PAGE_OP_TIMEOUT_MS,
       ""
     );
-    const challenge = detectChallenge(`${title} ${bodySample}`);
+    // Redirect SSRF guard: the page may have navigated to a different host.
+    // Re-validate the final URL (DNS-resolving) before trusting/capturing it.
+    const finalUrl = page.url();
+    if (finalUrl && finalUrl !== url) {
+      try {
+        await assertSafeExternalUrl(finalUrl);
+      } catch {
+        blockedReason = "Blocked redirect target";
+      }
+    }
+
+    const challenge = blockedReason ? null : detectChallenge(`${title} ${bodySample}`);
     if (challenge) {
       blockedReason = challenge;
-    } else if (status >= 400 && !bodySample.trim()) {
+    } else if (!blockedReason && status >= 400 && !bodySample.trim()) {
       // Only treat an error status as a hard block when the page also failed to
       // render any real content. A 4xx that still paints usable content (some
       // WAFs/CDNs do this) should not cost us the screenshot.
@@ -160,6 +248,17 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
     }
 
     if (!blockedReason) {
+      // Read rendered-DOM signals so the caller can detect client-rendered SPAs
+      // (static HTML crawl empty, but the rendered page clearly has content).
+      rendered = await raceTimeout<RenderedSignals | null>(
+        page.evaluate(() => ({
+          textLength: document.body?.innerText?.trim().length ?? 0,
+          h1Count: document.querySelectorAll("h1").length,
+        })),
+        PAGE_OP_TIMEOUT_MS,
+        null
+      );
+
       // Read the page dimensions defensively: a client-side redirect can destroy
       // the execution context here, and we must not let that drop the capture.
       const dims = await raceTimeout(
@@ -182,7 +281,9 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
       const raw = await raceTimeout<Buffer | Uint8Array | null>(
         page.screenshot({
           type: "jpeg",
-          quality: 80,
+          // Slightly lower quality trims the base64 payload (LLM request + the
+          // sessionStorage round-trip) with negligible impact on audit fidelity.
+          quality: 72,
           clip: { x: 0, y: 0, width, height, scale: 1 },
           captureBeyondViewport: true,
         }),
@@ -235,7 +336,8 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
     console.error("[screenshot] capture failed:", err);
   } finally {
     if (browser) await browser.close().catch(() => {});
+    releaseSlot();
   }
 
-  return { screenshots, heroShot, blockedReason };
+  return { screenshots, heroShot, blockedReason, rendered };
 }

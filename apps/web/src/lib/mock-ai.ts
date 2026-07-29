@@ -8,6 +8,7 @@ import type {
   SeverityLevel,
 } from "@/lib/cro";
 import { reportSchema, SCORE_CATEGORIES } from "@/lib/cro";
+import { safeHost } from "@/lib/utils";
 
 export interface AnalyzeInput {
   pageContext: PageContext;
@@ -334,7 +335,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "Reduce to essential fields (often just email), defer the rest, or use a multi-step form with a progress bar.",
       estimatedConversionImpact: "+7-14%",
-      annotation: { device: "mobile", x: 0.5, y: 0.55 },
+      annotation: { device: "desktop", x: 0.5, y: 0.55 },
     });
   }
 
@@ -355,7 +356,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "Optimize the LCP image, defer non-critical JS, enable compression/caching, and lazy-load below-the-fold media.",
       estimatedConversionImpact: "+4-10%",
-      annotation: { device: "mobile", x: 0.5, y: 0.3 },
+      annotation: { device: "desktop", x: 0.5, y: 0.3 },
     });
   }
 
@@ -374,7 +375,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         'Add <meta name="viewport" content="width=device-width, initial-scale=1"> and verify responsive breakpoints.',
       estimatedConversionImpact: "+10-20%",
-      annotation: { device: "mobile", x: 0.5, y: 0.5 },
+      annotation: { device: "desktop", x: 0.5, y: 0.5 },
     });
   }
 
@@ -654,7 +655,7 @@ function buildBlockedReport(
   scores.seo = clamp(lh.seo || neutral);
 
   const reason = ctx.blockReason ?? "bot protection";
-  const host = safeHost(ctx.finalUrl);
+  const host = safeHost(ctx.finalUrl, "This site");
 
   const issues: IssueInput[] = [
     {
@@ -710,7 +711,7 @@ function buildSummary(
   critical: number,
   high: number
 ): string {
-  const host = safeHost(ctx.finalUrl);
+  const host = safeHost(ctx.finalUrl, "This site");
   const tone =
     score >= 80
       ? "performs well overall"
@@ -721,12 +722,4 @@ function buildSummary(
     ? ` Its headline reads "${truncate(ctx.headings.h1[0], 60)}".`
     : " No clear H1 headline was detected.";
   return `${host} ${tone}, scoring ${score}/100 on our CRO framework.${headlineNote} We identified ${critical} critical and ${high} high-severity issues spanning messaging clarity, trust, and conversion friction. Fixing the top opportunities first should produce the fastest lift; the recommendations below are prioritized by expected impact versus implementation effort.`;
-}
-
-function safeHost(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return "This site";
-  }
 }

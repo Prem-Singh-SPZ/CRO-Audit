@@ -2,10 +2,9 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   ArrowRight,
-  ChevronDown,
   Loader2,
   Search,
   Sparkles,
@@ -17,17 +16,47 @@ import { cn } from "@/lib/utils";
 import { storeReport } from "@/lib/report-store";
 import type { ReportResponse } from "@/lib/types";
 
-const EXAMPLES = ["stripe.com", "notion.so", "linear.app", "vercel.com"];
+// Approximate pipeline stages, keyed by elapsed seconds. Timings mirror the
+// server pipeline (crawl + PageSpeed + screenshot in parallel, then the vision
+// LLM), giving honest-feeling feedback without a streaming backend.
+const ANALYZE_STAGES = [
+  { at: 0, label: "Fetching your page…" },
+  { at: 4, label: "Capturing a full-page screenshot…" },
+  { at: 12, label: "Measuring performance (Lighthouse)…" },
+  { at: 22, label: "Running the AI CRO analysis…" },
+  { at: 55, label: "Compiling your prioritized report…" },
+] as const;
 
 export function UrlAnalyzerForm({ className }: { className?: string }) {
   const router = useRouter();
   const [url, setUrl] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [showContext, setShowContext] = React.useState(false);
   const [targetAudience, setTargetAudience] = React.useState("");
   const [coreProduct, setCoreProduct] = React.useState("");
   const [primaryTrafficSource, setPrimaryTrafficSource] = React.useState("");
+  const [elapsed, setElapsed] = React.useState(0);
+
+  // Drive a lightweight staged-progress display while the (long) audit runs so
+  // the user gets real feedback instead of a bare spinner.
+  React.useEffect(() => {
+    if (!loading) {
+      setElapsed(0);
+      return;
+    }
+    const started = Date.now();
+    const id = setInterval(() => {
+      setElapsed(Math.round((Date.now() - started) / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [loading]);
+
+  const stage = ANALYZE_STAGES.reduce(
+    (acc, s) => (elapsed >= s.at ? s : acc),
+    ANALYZE_STAGES[0]
+  );
+  // Approach but never reach 100% until the response actually arrives.
+  const progressPct = Math.min(95, Math.round((elapsed / 90) * 100));
 
   async function submit(value: string) {
     const trimmed = value.trim();
@@ -37,10 +66,17 @@ export function UrlAnalyzerForm({ className }: { className?: string }) {
     }
     setLoading(true);
     setError(null);
+
+    // The audit can run up to ~120s server-side; guard the client so a hung
+    // request never leaves the form stuck disabled forever.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 130_000);
+
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           url: trimmed,
           targetAudience: targetAudience.trim() || undefined,
@@ -48,17 +84,36 @@ export function UrlAnalyzerForm({ className }: { className?: string }) {
           primaryTrafficSource: primaryTrafficSource.trim() || undefined,
         }),
       });
-      const data = await res.json();
+
+      // Parse defensively — a proxy/error page may not return JSON.
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        throw new Error(data?.error ?? "Something went wrong. Please try again.");
+        throw new Error(
+          data?.error ?? "Something went wrong. Please try again."
+        );
       }
-      storeReport(data as ReportResponse);
+      if (!data) {
+        throw new Error("Unexpected response from the server. Please try again.");
+      }
+
+      const stored = storeReport(data as ReportResponse);
+      if (!stored.ok) {
+        throw new Error(
+          "Your report was generated but is too large to open in this browser. Try a different browser or disable private mode, then run it again."
+        );
+      }
       router.push("/report");
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Something went wrong. Try again."
-      );
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setError("The audit timed out. Please try again.");
+      } else {
+        setError(
+          err instanceof Error ? err.message : "Something went wrong. Try again."
+        );
+      }
       setLoading(false);
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -71,7 +126,7 @@ export function UrlAnalyzerForm({ className }: { className?: string }) {
         }}
         className="group relative"
       >
-        <div className="glass-strong flex items-center gap-2 rounded-2xl p-2 shadow-xl shadow-black/5 transition-all focus-within:ring-2 focus-within:ring-primary/40">
+        <div className="glass-strong flex items-center gap-2 rounded-2xl border-2 border-primary/50 p-2 shadow-xl shadow-primary/10 transition-all focus-within:border-primary focus-within:ring-4 focus-within:ring-primary/20">
           <div className="flex flex-1 items-center gap-3 pl-3">
             <Search className="h-5 w-5 shrink-0 text-muted-foreground" />
             <input
@@ -108,63 +163,40 @@ export function UrlAnalyzerForm({ className }: { className?: string }) {
           </Button>
         </div>
 
-        <div className="mt-3">
-          <button
-            type="button"
-            onClick={() => setShowContext((v) => !v)}
-            disabled={loading}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
-          >
+        <div className="mt-3" id="audit-context-panel">
+          <p className="inline-flex items-center gap-1.5 text-sm font-medium text-primary">
             <SlidersHorizontal className="h-3.5 w-3.5" />
             Add context for a sharper audit
-            <span className="text-xs text-muted-foreground/70">(optional)</span>
-            <ChevronDown
-              className={cn(
-                "h-4 w-4 transition-transform",
-                showContext && "rotate-180"
-              )}
-            />
-          </button>
+            <span className="text-xs text-primary/70">(optional)</span>
+          </p>
 
-          <AnimatePresence initial={false}>
-            {showContext && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.22 }}
-                className="overflow-hidden"
-              >
-                <div className="mt-3 grid gap-3 rounded-2xl border bg-background/50 p-4 text-left sm:grid-cols-3">
-                  <ContextField
-                    label="Target audience"
-                    placeholder="e.g. B2B SaaS founders"
-                    value={targetAudience}
-                    onChange={setTargetAudience}
-                    disabled={loading}
-                  />
-                  <ContextField
-                    label="Core product / service"
-                    placeholder="e.g. AI invoicing tool"
-                    value={coreProduct}
-                    onChange={setCoreProduct}
-                    disabled={loading}
-                  />
-                  <ContextField
-                    label="Primary traffic source"
-                    placeholder="e.g. Google Ads, LinkedIn"
-                    value={primaryTrafficSource}
-                    onChange={setPrimaryTrafficSource}
-                    disabled={loading}
-                  />
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  We use this to judge message-match and relevance — not just
-                  generic best practice.
-                </p>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <div className="mt-3 grid gap-3 rounded-2xl border bg-background/50 p-4 text-left sm:grid-cols-3">
+            <ContextField
+              label="Target audience"
+              placeholder="e.g. B2B SaaS founders"
+              value={targetAudience}
+              onChange={setTargetAudience}
+              disabled={loading}
+            />
+            <ContextField
+              label="Core product / service"
+              placeholder="e.g. AI invoicing tool"
+              value={coreProduct}
+              onChange={setCoreProduct}
+              disabled={loading}
+            />
+            <ContextField
+              label="Primary traffic source"
+              placeholder="e.g. Google Ads, LinkedIn"
+              value={primaryTrafficSource}
+              onChange={setPrimaryTrafficSource}
+              disabled={loading}
+            />
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            We use this to judge message-match and relevance — not just generic
+            best practice.
+          </p>
         </div>
       </form>
 
@@ -178,34 +210,39 @@ export function UrlAnalyzerForm({ className }: { className?: string }) {
           {error}
         </motion.p>
       ) : loading ? (
-        <motion.p
+        <motion.div
           initial={{ opacity: 0, y: -4 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mt-3 inline-flex items-center gap-2 text-sm text-muted-foreground"
+          className="mt-4"
+          role="status"
+          aria-live="polite"
         >
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Running your CRO audit — analyzing conversion signals. This can take up
-          to a minute.
-        </motion.p>
-      ) : (
-        <div className="mt-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          <span>Try:</span>
-          {EXAMPLES.map((ex) => (
-            <button
-              key={ex}
-              type="button"
-              disabled={loading}
-              onClick={() => {
-                setUrl(ex);
-                void submit(ex);
-              }}
-              className="rounded-full border bg-background/50 px-3 py-1 font-medium text-foreground/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-60"
-            >
-              {ex}
-            </button>
-          ))}
-        </div>
-      )}
+          <div className="flex items-center justify-between text-sm">
+            <span className="inline-flex items-center gap-2 font-medium">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+              {stage.label}
+            </span>
+            <span className="tabular-nums text-xs text-muted-foreground">
+              {elapsed}s
+            </span>
+          </div>
+          <div
+            className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progressPct}
+          >
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-primary to-amber-500 transition-[width] duration-1000 ease-linear"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Running a full CRO audit — this usually takes 30–90 seconds.
+          </p>
+        </motion.div>
+      ) : null}
     </div>
   );
 }
@@ -233,7 +270,7 @@ function ContextField({
         placeholder={placeholder}
         disabled={disabled}
         maxLength={300}
-        className="h-10 w-full rounded-xl border bg-background px-3 text-sm outline-none transition-colors focus:ring-2 focus:ring-primary/40 disabled:opacity-60"
+        className="h-10 w-full rounded-xl border-2 border-primary/50 bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
       />
     </label>
   );

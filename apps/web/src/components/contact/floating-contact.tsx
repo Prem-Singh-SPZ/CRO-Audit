@@ -29,9 +29,10 @@ export function FloatingContact({ context }: { context?: ContactContext }) {
       };
   const menuTitle = isReport ? "Get help fixing this" : "Talk to a CRO expert";
 
-  // Nudge the user with a teaser bubble a few seconds after landing.
+  // Nudge the user with a teaser bubble only after they've had time to take in
+  // the primary action first — we don't want it competing on first paint.
   React.useEffect(() => {
-    const t = setTimeout(() => setShowTeaser(true), 3500);
+    const t = setTimeout(() => setShowTeaser(true), 9000);
     return () => clearTimeout(t);
   }, []);
 
@@ -50,38 +51,37 @@ export function FloatingContact({ context }: { context?: ContactContext }) {
       {/* Teaser bubble */}
       <AnimatePresence>
         {showTeaser && !expanded && !teaserDismissed ? (
-          <motion.button
-            type="button"
-            onClick={openMenu}
+          <motion.div
             initial={{ opacity: 0, y: 12, scale: 0.9 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.9 }}
             transition={{ type: "spring", stiffness: 300, damping: 24 }}
-            className="glass-strong group relative max-w-[15rem] rounded-2xl rounded-br-sm p-3.5 pr-9 text-left shadow-xl"
+            className="glass-strong group relative max-w-[15rem] rounded-2xl rounded-br-sm shadow-xl"
           >
-            <span
-              role="button"
-              tabIndex={0}
+            {/* Full-area button opens the menu; dismiss is a sibling button so we
+                never nest interactive elements. */}
+            <button
+              type="button"
+              onClick={openMenu}
+              className="block w-full rounded-2xl rounded-br-sm p-3.5 pr-9 text-left"
+            >
+              <p className="text-sm font-semibold">{teaser.title}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {teaser.subtitle}
+              </p>
+            </button>
+            <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 hideTeaser();
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.stopPropagation();
-                  hideTeaser();
-                }
               }}
               className="absolute right-2 top-2 rounded-full p-1 text-muted-foreground opacity-70 transition-opacity hover:opacity-100"
               aria-label="Dismiss"
             >
               <X className="h-3.5 w-3.5" />
-            </span>
-            <p className="text-sm font-semibold">{teaser.title}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {teaser.subtitle}
-            </p>
-          </motion.button>
+            </button>
+          </motion.div>
         ) : null}
       </AnimatePresence>
 
@@ -135,9 +135,6 @@ export function FloatingContact({ context }: { context?: ContactContext }) {
         aria-label={expanded ? "Close contact menu" : "Contact us"}
         className="relative flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-r from-primary to-amber-500 text-primary-foreground shadow-lg shadow-primary/40 transition-transform hover:scale-105 active:scale-95"
       >
-        {!expanded && !teaserDismissed ? (
-          <span className="absolute inset-0 -z-10 animate-ping rounded-full bg-primary/40" />
-        ) : null}
         <AnimatePresence mode="wait" initial={false}>
           {expanded ? (
             <motion.span

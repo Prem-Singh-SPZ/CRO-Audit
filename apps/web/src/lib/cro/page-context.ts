@@ -1,5 +1,3 @@
-import type { Device } from "./constants";
-
 // Structured data extracted from the target page by the cheerio analyzer.
 // This is what we hand to the AI provider alongside PageSpeed metrics.
 
@@ -33,13 +31,6 @@ export interface ImageStats {
   total: number;
   withAlt: number;
   withoutAlt: number;
-}
-
-export interface ScreenshotRef {
-  device: Device;
-  path: string;
-  width: number;
-  height: number;
 }
 
 export interface PageContext {
@@ -83,7 +74,13 @@ export interface PageContext {
    */
   blocked: boolean;
   blockReason: string | null;
-  screenshots: ScreenshotRef[];
+  /**
+   * True when the static HTML fetch returned little/no content but the rendered
+   * (headless-browser) page clearly shows content — i.e. the page is a
+   * client-rendered SPA. When set, downstream analysis must trust the
+   * screenshot over the sparse crawled DOM and avoid false "missing X" issues.
+   */
+  clientRendered?: boolean;
 }
 
 export interface LighthouseSummary {

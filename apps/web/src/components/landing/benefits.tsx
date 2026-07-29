@@ -4,7 +4,7 @@ import { Reveal } from "@/components/reveal";
 
 const BENEFITS = [
   "Stop guessing why visitors bounce instead of buying",
-  "Uncover hidden conversion friction across every device",
+  "Uncover hidden conversion friction across your entire page",
   "Get expert CRO recommendations without hiring a consultant",
   "Prioritize fixes by impact vs. effort - not gut feeling",
   "Benchmark against SaaS, ecommerce, and landing-page best practices",
@@ -14,7 +14,7 @@ const BENEFITS = [
 const STATS = [
   { value: "34+", label: "CRO categories analyzed" },
   { value: "<60s", label: "Average audit time" },
-  { value: "3", label: "Device viewports captured" },
+  { value: "Full-page", label: "Desktop screenshot analyzed" },
   { value: "12", label: "Score dimensions" },
 ];
 

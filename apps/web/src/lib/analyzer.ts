@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import type { PageContext, FormInfo, ButtonInfo, LinkInfo } from "@/lib/cro";
 import { detectChallenge } from "@/lib/challenge";
+import { assertSafeExternalUrl } from "@/lib/net-guard";
 
 const DESKTOP_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
@@ -36,6 +37,15 @@ export async function analyzePage(url: string): Promise<PageContext> {
     });
     clearTimeout(timeout);
     finalUrl = res.url || url;
+    // Redirect SSRF guard: a public URL can 30x into an internal host. Validate
+    // the post-redirect URL before we trust/parse anything from it.
+    if (finalUrl !== url) {
+      try {
+        await assertSafeExternalUrl(finalUrl);
+      } catch {
+        return buildEmptyContext(url, finalUrl, "Blocked redirect target", start);
+      }
+    }
     html = await res.text();
     if (res.status >= 400) {
       blockReason =
@@ -222,7 +232,6 @@ export async function analyzePage(url: string): Promise<PageContext> {
     loadTimeMs,
     blocked: blockReason !== null,
     blockReason,
-    screenshots: [],
   };
 }
 
@@ -258,6 +267,5 @@ function buildEmptyContext(
     loadTimeMs: Date.now() - start,
     blocked: true,
     blockReason: reason,
-    screenshots: [],
   };
 }

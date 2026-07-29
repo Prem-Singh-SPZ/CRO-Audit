@@ -3,7 +3,6 @@
 import * as React from "react";
 import {
   Monitor,
-  Tablet,
   Smartphone,
   Eye,
   Sparkles,
@@ -23,12 +22,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-type Device = "desktop" | "tablet" | "mobile";
+type Device = "desktop" | "mobile";
 type ViewMode = "issues" | "fixes";
 
+// Only desktop + mobile are ever produced; tablet was never captured.
 const DEVICE_TABS: { key: Device; icon: typeof Monitor; label: string }[] = [
   { key: "desktop", icon: Monitor, label: "Desktop" },
-  { key: "tablet", icon: Tablet, label: "Tablet" },
   { key: "mobile", icon: Smartphone, label: "Mobile" },
 ];
 
@@ -37,11 +36,13 @@ export function AnnotatedScreenshots({
   issues,
   mockups = [],
   mockupPending = false,
+  mockupError = false,
 }: {
   screenshots: ScreenshotDto[];
   issues: IssueDto[];
   mockups?: MockupDto[];
   mockupPending?: boolean;
+  mockupError?: boolean;
 }) {
   const available = DEVICE_TABS.filter((t) =>
     screenshots.some((s) => s.device === t.key)
@@ -83,6 +84,7 @@ export function AnnotatedScreenshots({
             <button
               key={t.key}
               onClick={() => setDevice(t.key)}
+              aria-pressed={device === t.key}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors",
                 device === t.key
@@ -100,6 +102,7 @@ export function AnnotatedScreenshots({
           <div className="inline-flex rounded-full border bg-muted/50 p-1">
             <button
               onClick={() => setView("issues")}
+              aria-pressed={view === "issues"}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors",
                 view === "issues"
@@ -112,6 +115,7 @@ export function AnnotatedScreenshots({
             </button>
             <button
               onClick={() => setView("fixes")}
+              aria-pressed={view === "fixes"}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors",
                 view === "fixes"
@@ -127,6 +131,10 @@ export function AnnotatedScreenshots({
               With fixes
             </button>
           </div>
+        ) : mockupError && device === "desktop" ? (
+          <span className="text-xs text-muted-foreground">
+            Redesign preview unavailable
+          </span>
         ) : (
           <span className="text-xs text-muted-foreground">
             {pins.length} annotation{pins.length === 1 ? "" : "s"}
@@ -147,7 +155,7 @@ export function AnnotatedScreenshots({
             device === "mobile" ? "max-w-[360px]" : "max-w-full"
           )}
         >
-          {active ? (
+          {active?.url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={active.url}

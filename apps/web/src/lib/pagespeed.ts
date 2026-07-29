@@ -1,27 +1,13 @@
 import type { LighthouseSummary, PageContext } from "@/lib/cro";
 
-export interface PageSpeedScreenshot {
-  device: "desktop" | "mobile";
-  dataUrl: string;
-  width: number;
-  height: number;
-}
-
 export interface PageSpeedResult {
   lighthouse: LighthouseSummary | null;
-  screenshots: PageSpeedScreenshot[];
 }
 
 const PSI_ENDPOINT =
   "https://www.googleapis.com/pagespeedonline/v5/runPagespeed";
 
 type Strategy = "mobile" | "desktop";
-
-interface RawStrategyResult {
-  strategy: Strategy;
-  summary: LighthouseSummary;
-  screenshot: PageSpeedScreenshot | null;
-}
 
 function pct(score: number | null | undefined): number {
   return Math.round(((score ?? 0) as number) * 100);
@@ -30,7 +16,7 @@ function pct(score: number | null | undefined): number {
 async function runStrategy(
   url: string,
   strategy: Strategy
-): Promise<RawStrategyResult | null> {
+): Promise<LighthouseSummary | null> {
   const params = new URLSearchParams({ url, strategy });
   for (const cat of ["performance", "accessibility", "best-practices", "seo"]) {
     params.append("category", cat);
@@ -75,58 +61,23 @@ async function runStrategy(
       },
     };
 
-    const device: "desktop" | "mobile" =
-      strategy === "desktop" ? "desktop" : "mobile";
-
-    // Prefer the full-page screenshot (includes dimensions); fall back to the
-    // above-the-fold final screenshot audit.
-    let screenshot: PageSpeedScreenshot | null = null;
-    const fps = lhr.fullPageScreenshot?.screenshot;
-    if (fps?.data) {
-      screenshot = {
-        device,
-        dataUrl: fps.data,
-        width: fps.width ?? (device === "mobile" ? 390 : 1440),
-        height: fps.height ?? 0,
-      };
-    } else {
-      const finalData = audits?.["final-screenshot"]?.details?.data;
-      if (typeof finalData === "string") {
-        screenshot = {
-          device,
-          dataUrl: finalData,
-          width: device === "mobile" ? 390 : 1440,
-          height: 0,
-        };
-      }
-    }
-
-    return { strategy, summary, screenshot };
+    return summary;
   } catch {
     return null;
   }
 }
 
 /**
- * Runs Google PageSpeed Insights for mobile + desktop in parallel and returns
- * a Lighthouse summary (mobile-first, matching Lighthouse's default emulation)
- * plus screenshots for each strategy. Returns lighthouse: null if both fail so
- * the caller can fall back to a heuristic estimate.
+ * Runs Google PageSpeed Insights and returns a Lighthouse summary (mobile-first,
+ * matching Lighthouse's default emulation). We request mobile only and fall back
+ * to desktop just if mobile fails — this halves the PSI quota/latency in the
+ * common case versus always running both. Returns lighthouse: null if both fail
+ * so the caller can fall back to a heuristic estimate.
  */
 export async function getPageSpeed(url: string): Promise<PageSpeedResult> {
-  const [mobile, desktop] = await Promise.all([
-    runStrategy(url, "mobile"),
-    runStrategy(url, "desktop"),
-  ]);
-
-  const screenshots: PageSpeedScreenshot[] = [];
-  if (desktop?.screenshot) screenshots.push(desktop.screenshot);
-  if (mobile?.screenshot) screenshots.push(mobile.screenshot);
-
-  // Mobile summary is preferred (Lighthouse defaults to mobile), else desktop.
-  const lighthouse = mobile?.summary ?? desktop?.summary ?? null;
-
-  return { lighthouse, screenshots };
+  const mobile = await runStrategy(url, "mobile");
+  const lighthouse = mobile ?? (await runStrategy(url, "desktop"));
+  return { lighthouse };
 }
 
 /**

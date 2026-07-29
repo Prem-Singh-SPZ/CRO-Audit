@@ -6,7 +6,6 @@ import { Features } from "@/components/landing/features";
 import { HowItWorks } from "@/components/landing/how-it-works";
 import { Benefits } from "@/components/landing/benefits";
 import { Testimonials } from "@/components/landing/testimonials";
-import { CtaSection } from "@/components/landing/cta-section";
 import { AgencyCta } from "@/components/report/agency-cta";
 import { FloatingContact } from "@/components/contact/floating-contact";
 import { config } from "@/lib/config";
@@ -15,15 +14,14 @@ export default function HomePage() {
   return (
     <>
       <Navbar />
-      <main>
+      <main id="main-content" tabIndex={-1}>
         <Hero />
         <HowItWorks />
         <Stats />
         <Features />
         <Benefits />
         <Testimonials />
-        <CtaSection />
-        <section className="pb-24">
+        <section className="py-24">
           <div className="container">
             <AgencyCta
               context={{ source: "landing" }}

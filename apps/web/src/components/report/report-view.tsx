@@ -6,7 +6,7 @@ import { Globe, Calendar, Gauge, TrendingUp, AlertTriangle } from "lucide-react"
 
 import type { ReportResponse } from "@/lib/types";
 import { SEVERITY_META, PRIORITY_META, BOOKING_ANCHOR_ID } from "@/lib/report-ui";
-import { formatDate } from "@/lib/utils";
+import { formatDate, safeHost } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -21,16 +21,19 @@ import { RecommendationCards } from "./recommendation-cards";
 import { AgencyCta } from "./agency-cta";
 import { ReportHeader } from "./report-header";
 import { ConversionImpactPanel } from "./conversion-impact-panel";
+import { FloatingContact } from "@/components/contact/floating-contact";
 import type { ContactContext } from "@/components/contact/types";
 
 export function ReportView({
   data,
   readOnly = false,
   mockupPending = false,
+  mockupError = false,
 }: {
   data: ReportResponse;
   readOnly?: boolean;
   mockupPending?: boolean;
+  mockupError?: boolean;
 }) {
   const { scan, report, issues, recommendations, screenshots, lighthouse } = data;
   // `mockups` was added later; default so older/shared payloads still render.
@@ -48,7 +51,9 @@ export function ReportView({
     .sort((a, b) => SEVERITY_META[a.severity].order - SEVERITY_META[b.severity].order)
     .slice(0, 4);
 
-  const hasScreenshots = screenshots.length > 0;
+  // A slimmed (quota-degraded) payload keeps screenshot rows but blanks their
+  // data URIs — only treat the tab as available when we actually have an image.
+  const hasScreenshots = screenshots.some((s) => s.url);
 
   return (
     <div className="min-h-screen pb-24">
@@ -58,7 +63,7 @@ export function ReportView({
         <ReportHeader data={data} />
       )}
 
-      <main className="container mt-10">
+      <main id="main-content" tabIndex={-1} className="container mt-10">
         <div className="space-y-10">
         {/* Summary hero */}
         <motion.div
@@ -148,6 +153,7 @@ export function ReportView({
                     issues={issues}
                     mockups={mockups}
                     mockupPending={mockupPending}
+                    mockupError={mockupError}
                   />
                 </CardContent>
               </Card>
@@ -251,6 +257,10 @@ export function ReportView({
           <AgencyCta context={contactContext} />
         </div>
       </main>
+
+      {/* Sticky lead-gen CTA — mirrors the homepage so visitors can reach our
+          CRO team from anywhere in the report. */}
+      <FloatingContact context={contactContext} />
     </div>
   );
 }
@@ -266,12 +276,4 @@ function ReadOnlyHeader({ host }: { host: string }) {
       </div>
     </header>
   );
-}
-
-function safeHost(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return url;
-  }
 }

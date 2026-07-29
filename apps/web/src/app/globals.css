@@ -22,7 +22,8 @@
     --secondary-foreground: 216 40% 16%;
 
     --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 42%;
+    /* Darkened for stronger body/secondary-text contrast on white (WCAG AA+). */
+    --muted-foreground: 216 30% 24%;
 
     --accent: 38 100% 94%;
     --accent-foreground: 30 90% 30%;
@@ -40,7 +41,9 @@
     --brand-foreground: 0 0% 100%;
 
     --border: 214 25% 90%;
-    --input: 214 25% 90%;
+    /* Slightly darker than the border so input fields read as distinct,
+       interactive surfaces instead of blending into the page. */
+    --input: 214 22% 80%;
     --ring: 38 92% 52%;
 
     --radius: 0.6rem;
@@ -63,7 +66,8 @@
     --secondary-foreground: 0 0% 98%;
 
     --muted: 216 35% 15%;
-    --muted-foreground: 214 22% 70%;
+    /* Brightened so secondary text stays easily readable on deep navy. */
+    --muted-foreground: 214 32% 88%;
 
     --accent: 216 45% 18%;
     --accent-foreground: 38 95% 70%;
@@ -81,7 +85,8 @@
     --brand-foreground: 0 0% 100%;
 
     --border: 216 40% 18%;
-    --input: 216 40% 20%;
+    /* Lighter than the border so fields stand out against the dark card. */
+    --input: 216 38% 30%;
     --ring: 38 95% 58%;
   }
 }
@@ -102,8 +107,23 @@
   h6 {
     @apply font-display;
   }
+  /* Solid, high-contrast highlight so selected text stays legible in both
+     themes instead of the washed-out translucent amber it used to be. */
   ::selection {
-    @apply bg-primary/20;
+    background-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+  }
+  /* Inputs and textareas inherit the readable foreground colour and keep a
+     clearly visible placeholder in both themes. */
+  input,
+  textarea,
+  select {
+    color: hsl(var(--foreground));
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: hsl(var(--muted-foreground));
+    opacity: 1;
   }
 }
 
@@ -142,6 +162,19 @@
   }
   main {
     padding-top: 1rem !important;
+  }
+}
+
+/* Respect the OS "reduce motion" preference for CSS-driven animation
+   (framer-motion is handled separately via <MotionConfig reducedMotion="user">). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

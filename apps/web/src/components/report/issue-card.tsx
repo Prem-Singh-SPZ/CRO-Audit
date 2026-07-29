@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 export function IssueCard({ issue }: { issue: IssueDto }) {
   const [open, setOpen] = React.useState(false);
   const meta = SEVERITY_META[issue.severity];
+  const panelId = React.useId();
 
   return (
     <div
@@ -38,6 +39,8 @@ export function IssueCard({ issue }: { issue: IssueDto }) {
     >
       <button
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={panelId}
         className="flex w-full items-start gap-4 p-5 text-left"
       >
         <span className={cn("mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full", meta.dot)} />
@@ -85,6 +88,7 @@ export function IssueCard({ issue }: { issue: IssueDto }) {
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.25 }}
             className="overflow-hidden"
+            id={panelId}
           >
             <div className="space-y-4 border-t px-5 py-5">
               {issue.psychology && (

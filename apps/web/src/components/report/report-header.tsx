@@ -8,6 +8,7 @@ import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { scrollToBooking } from "@/lib/report-ui";
+import { safeHost } from "@/lib/utils";
 import type { ReportResponse } from "@/lib/types";
 
 export function ReportHeader({ data }: { data: ReportResponse }) {
@@ -16,7 +17,7 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
-    const host = safeHost(data.scan.url);
+    const host = safeHost(data.scan.url, "site");
     const a = document.createElement("a");
     a.href = url;
     a.download = `cro-report-${host}.json`;
@@ -71,12 +72,4 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
       </div>
     </header>
   );
-}
-
-function safeHost(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return "site";
-  }
 }

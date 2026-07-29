@@ -2,8 +2,13 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { motion, useScroll, useMotionValueEvent } from "framer-motion";
-import { ArrowRight } from "lucide-react";
+import {
+  motion,
+  AnimatePresence,
+  useScroll,
+  useMotionValueEvent,
+} from "framer-motion";
+import { ArrowRight, Menu, X } from "lucide-react";
 
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -19,11 +24,22 @@ const NAV_LINKS = [
 
 export function Navbar() {
   const [scrolled, setScrolled] = React.useState(false);
+  const [menuOpen, setMenuOpen] = React.useState(false);
   const { scrollY } = useScroll();
 
   useMotionValueEvent(scrollY, "change", (latest) => {
     setScrolled(latest > 12);
   });
+
+  // Close the mobile menu on Escape for keyboard users.
+  React.useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
 
   return (
     <motion.header
@@ -60,15 +76,64 @@ export function Navbar() {
 
           <div className="flex items-center gap-2">
             <ThemeToggle />
-            {/* Always-present lead-gen CTA */}
-            <Button asChild size="sm" variant="gradient">
+            {/* Secondary lead-gen CTA. Kept as an outline so it doesn't compete
+                with the hero's primary "Analyze" action — the one thing we want
+                first-time visitors to do above the fold. */}
+            <Button asChild size="sm" variant="outline" className="hidden md:inline-flex">
               <Link href={config.bookCallUrl} target="_blank">
                 Get a demo
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
+
+            {/* Mobile menu toggle — the links are hidden below md. */}
+            <button
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-expanded={menuOpen}
+              aria-controls="mobile-nav"
+              aria-label={menuOpen ? "Close menu" : "Open menu"}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:text-foreground md:hidden"
+            >
+              {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
           </div>
         </div>
+
+        {/* Mobile nav panel */}
+        <AnimatePresence>
+          {menuOpen && (
+            <motion.nav
+              id="mobile-nav"
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2 }}
+              className="glass-strong mt-2 flex flex-col gap-1 rounded-2xl p-3 shadow-lg md:hidden"
+            >
+              {NAV_LINKS.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setMenuOpen(false)}
+                  className="rounded-xl px-3.5 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                >
+                  {link.label}
+                </Link>
+              ))}
+              <Button asChild size="sm" variant="outline" className="mt-1 justify-center">
+                <Link
+                  href={config.bookCallUrl}
+                  target="_blank"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Get a demo
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </Button>
+            </motion.nav>
+          )}
+        </AnimatePresence>
       </div>
     </motion.header>
   );

@@ -24,8 +24,10 @@ export function ScoreGauge({
     <div
       className="relative inline-flex items-center justify-center"
       style={{ width: size, height: size }}
+      role="img"
+      aria-label={`CRO score: ${score} out of 100 — ${scoreLabel(score)}`}
     >
-      <svg width={size} height={size} className="-rotate-90">
+      <svg width={size} height={size} className="-rotate-90" aria-hidden="true">
         <circle
           cx={size / 2}
           cy={size / 2}
