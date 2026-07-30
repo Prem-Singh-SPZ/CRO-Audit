@@ -12,7 +12,7 @@ import {
   ReferenceLine,
 } from "recharts";
 
-import type { RecommendationDto } from "@/lib/types";
+import type { RecommendationDto } from "@cro/shared";
 
 export function PriorityMatrix({
   recommendations,

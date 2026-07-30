@@ -2,7 +2,7 @@ import type {
   SeverityLevel,
   ComplexityLevel,
   DiyRiskLevel,
-} from "@/lib/cro";
+} from "@cro/shared";
 
 // Anchor for the sticky booking panel + a smooth-scroll helper reused by the
 // header CTA, the revenue calculator, and the flaw cards.

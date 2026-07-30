@@ -1,6 +1,6 @@
 "use client";
 
-import type { LighthouseDto } from "@/lib/types";
+import type { LighthouseDto } from "@cro/shared";
 import { ScoreGauge } from "./score-gauge";
 
 const CATEGORIES: { key: keyof Omit<LighthouseDto, "metrics">; label: string }[] =

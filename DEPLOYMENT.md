@@ -1,93 +1,127 @@
 # Deployment Guide
 
-CRO Audit AI is a stateless Next.js app (no database or background worker). It
-captures screenshots **in-process** with headless Chromium, so it needs a host
-that allows generous function memory/duration. It deploys to **Vercel (Pro tier
-or higher)** or any container platform via the included Dockerfile.
+CRO Audit AI is split for free-tier hosting:
 
-## Deploy to Vercel
+| Piece | App | Host |
+| --- | --- | --- |
+| UI (landing + report) | `apps/web` | **Vercel Hobby** |
+| API (analyze + mockup + Chromium) | `apps/api` | **GCP Cloud Run** |
 
-1. Push this repo to GitHub/GitLab/Bitbucket.
-2. In Vercel: **Add New Project → Import** the repo.
-3. Set **Root Directory** to `apps/web` (this is a monorepo; the app lives there).
-   Vercel auto-detects Next.js; the build command is `next build` and the
-   function limits are set in [`apps/web/vercel.json`](apps/web/vercel.json).
-4. Add environment variables (Project → Settings → Environment Variables):
+Shared Zod schemas / DTOs live in `packages/shared` (`@cro/shared`).
+
+## 1. Deploy the API to GCP Cloud Run
+
+Requires a GCP project with Cloud Run + Artifact Registry (or Cloud Build) enabled.
+The always-free Cloud Run allowance is enough for light personal/demo traffic.
+
+### Build & deploy
+
+From the **monorepo root**:
+
+```bash
+# Build the image (includes system Chromium)
+docker build -f apps/api/Dockerfile -t cro-audit-api .
+
+# Tag + push to Artifact Registry (example)
+# gcloud auth configure-docker REGION-docker.pkg.dev
+# docker tag cro-audit-api REGION-docker.pkg.dev/PROJECT/REPO/cro-audit-api:latest
+# docker push REGION-docker.pkg.dev/PROJECT/REPO/cro-audit-api:latest
+
+gcloud run deploy cro-audit-api \
+  --image REGION-docker.pkg.dev/PROJECT/REPO/cro-audit-api:latest \
+  --region REGION \
+  --platform managed \
+  --allow-unauthenticated \
+  --memory 2Gi \
+  --cpu 1 \
+  --timeout 300 \
+  --concurrency 1 \
+  --min-instances 0 \
+  --max-instances 3 \
+  --set-env-vars "AI_PROVIDER=mock,CORS_ORIGINS=https://YOUR_VERCEL_APP.vercel.app,ENABLE_FIX_MOCKUP=true"
+```
+
+Then set secrets (Cloud Run → Edit & deploy new revision → Variables & secrets),
+or via `--set-env-vars` / Secret Manager:
+
+| Key | Notes |
+| --- | --- |
+| `CORS_ORIGINS` | Your Vercel URL(s), comma-separated |
+| `GOOGLE_PAGESPEED_API_KEY` | optional but recommended |
+| `AI_PROVIDER` | `mock` / `openai` / `anthropic` / `gemini` |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | as needed |
+| `GEMINI_*` / `MOCKUP_*` / `RATE_LIMIT_*` / `MAX_CONCURRENT_BROWSERS` | optional tuning |
+
+> Do **not** set `CHROME_EXECUTABLE_PATH` on Cloud Run — the image already uses
+> `/usr/bin/chromium`.
+
+Copy the Cloud Run service URL (e.g. `https://cro-audit-api-xxxxx.run.app`).
+
+### Health check
+
+`GET /health` → `{ "ok": true, ... }`
+
+## 2. Deploy the frontend to Vercel (Hobby)
+
+1. Push the repo to GitHub/GitLab/Bitbucket.
+2. In Vercel: **Add New Project → Import**.
+3. Set **Root Directory** to `apps/web`.
+   Install/build commands are already in [`apps/web/vercel.json`](apps/web/vercel.json)
+   (they `cd` to the monorepo root so workspaces resolve).
+4. Add **only** frontend env vars:
 
    | Key | Value |
    | --- | --- |
-   | `NEXT_PUBLIC_APP_URL` | your Vercel URL (e.g. `https://your-app.vercel.app`) |
-   | `GOOGLE_PAGESPEED_API_KEY` | free key from Google Cloud (see below) |
-   | `AI_PROVIDER` | `mock`, `openai`, `anthropic`, or `gemini` |
-   | `OPENAI_API_KEY` / `OPENAI_MODEL` | required if `AI_PROVIDER=openai` |
-   | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | required if `AI_PROVIDER=anthropic` |
-   | `GEMINI_API_KEY` / `GEMINI_MODEL` | required if `AI_PROVIDER=gemini` |
-   | `ENABLE_FIX_MOCKUP` | `true`/`false` — AI "after" concept (needs `GEMINI_API_KEY`) |
-   | `RATE_LIMIT_*` / `MAX_CONCURRENT_BROWSERS` | optional tuning (see README) |
-   | `NEXT_PUBLIC_BRAND_NAME` / `NEXT_PUBLIC_COMPANY` | branding |
-   | `NEXT_PUBLIC_LOGO_TEXT` / `NEXT_PUBLIC_SITE_TITLE` | branding |
-   | `NEXT_PUBLIC_HERO_BADGE` / `NEXT_PUBLIC_FOOTER_DESCRIPTION` | copy |
-   | `NEXT_PUBLIC_BOOK_CALL_URL` / `NEXT_PUBLIC_CONTACT_URL` | links |
-   | `NEXT_PUBLIC_CONTACT_EMAIL` / `NEXT_PUBLIC_PHONE` | contact |
-   | `NEXT_PUBLIC_ADDRESS_LINE1` / `NEXT_PUBLIC_ADDRESS_CITY` | address |
+   | `NEXT_PUBLIC_APP_URL` | `https://your-app.vercel.app` |
+   | `NEXT_PUBLIC_API_URL` | Cloud Run URL (no trailing slash) |
+   | `NEXT_PUBLIC_BRAND_NAME` / `NEXT_PUBLIC_COMPANY` / … | branding |
+   | `NEXT_PUBLIC_BOOK_CALL_URL` / contact fields | links |
 
-   > Do **not** set `CHROME_EXECUTABLE_PATH` on Vercel — the bundled
-   > `@sparticuz/chromium` binary is used automatically. Only set it for local dev.
+   **Never** put AI keys, PageSpeed keys, or rate-limit secrets on Vercel.
 
-5. Deploy. After the first deploy, set `NEXT_PUBLIC_APP_URL` to the assigned
-   domain and **redeploy** (the `NEXT_PUBLIC_*` values are inlined at build time).
+5. Deploy. After the first deploy, confirm `NEXT_PUBLIC_*` values and redeploy
+   if needed (`NEXT_PUBLIC_*` are inlined at build time).
 
-## Function limits (important)
+6. Update Cloud Run `CORS_ORIGINS` to include the final Vercel domain, then
+   redeploy the API revision.
 
-The audit runs the crawl, PageSpeed, and a headless-Chromium screenshot in
-parallel, then a vision-LLM call — so `POST /api/analyze` and `POST /api/mockup`
-declare **`maxDuration = 120`** with elevated memory in
-[`apps/web/vercel.json`](apps/web/vercel.json).
+## Local development
 
-- **Vercel Pro / Enterprise:** required — supports the 120s limit and the memory
-  headroom Chromium needs.
-- **Vercel Hobby:** 10s function cap — the audit **will** time out. Upgrade to Pro.
+```bash
+cp .env.example .env
+# Set CHROME_EXECUTABLE_PATH to a local Chrome/Edge for screenshots
+npm install
+npm run dev
+# web → http://localhost:3000
+# api → http://localhost:8080
+```
+
+Or run separately: `npm run dev:web` / `npm run dev:api`.
+
+## Free-tier notes
+
+- **Vercel Hobby** is fine — the UI has no long-running serverless functions.
+- **Cloud Run** scales to zero (`min-instances=0`). Expect a cold start (often
+  10–30s) on the first audit after idle; Chromium is memory-heavy, so keep
+  concurrency at 1–2 and memory at **2Gi**.
+- **Gemini / OpenAI / Anthropic** billing is separate from GCP free tier.
+- In-memory rate limits and result cache are **per instance** (acceptable for a
+  single Cloud Run service).
 
 ## Google PageSpeed Insights API key
 
-1. Go to [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials).
-2. Enable the **PageSpeed Insights API** and create an **API key**.
-3. Set it as `GOOGLE_PAGESPEED_API_KEY`.
+1. [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials)
+2. Enable **PageSpeed Insights API**, create an API key.
+3. Set as `GOOGLE_PAGESPEED_API_KEY` on **Cloud Run** only.
 
 Free tier: **25,000 requests/day**. Without a key the API is heavily
-rate-limited (HTTP 429), and the app falls back to a heuristic performance
-estimate. The app requests the **mobile** strategy and only falls back to desktop
-if mobile fails (1 PSI call in the common case).
+rate-limited and the app falls back to a heuristic performance estimate.
 
-## Screenshots (in-process Chromium)
-
-Screenshots are captured with `puppeteer-core` + `@sparticuz/chromium`, fully
-in-process. Concurrency is capped by `MAX_CONCURRENT_BROWSERS` (default 2) so a
-burst of audits can't exhaust function memory; over the cap, an audit degrades to
-"no screenshot" rather than failing. If capture fails or the page is bot-walled,
-the report is still produced from the crawl + PageSpeed + text.
-
-## Report intelligence (hybrid)
-
-- `AI_PROVIDER=mock` (default): a page-specific heuristic engine, no keys needed.
-- `AI_PROVIDER=openai` / `anthropic` / `gemini`: a real vision LLM reads the page
-  + screenshot for exclusive findings, and auto-falls back to the heuristic
-  engine if the call fails or is misconfigured.
-
-## Docker
-
-A production [`apps/web/Dockerfile`](apps/web/Dockerfile) is included. It builds
-the Next.js **standalone** output and ships a system Chromium for screenshots.
-Build from the **monorepo root**:
+## Docker (API only)
 
 ```bash
-docker build -f apps/web/Dockerfile -t cro-audit-web .
-docker run -p 3000:3000 --env-file .env cro-audit-web
-```
-
-## Local production build
-
-```bash
-npm run build
-npm run start   # http://localhost:3000
+docker build -f apps/api/Dockerfile -t cro-audit-api .
+docker run -p 8080:8080 --env-file .env \
+  -e CORS_ORIGINS=http://localhost:3000 \
+  cro-audit-api
 ```

@@ -6,9 +6,9 @@ import type {
   LighthouseSummary,
   ScoreCategory,
   SeverityLevel,
-} from "@/lib/cro";
-import { reportSchema, SCORE_CATEGORIES } from "@/lib/cro";
-import { safeHost } from "@/lib/utils";
+} from "@cro/shared";
+import { reportSchema, SCORE_CATEGORIES } from "@cro/shared";
+import { safeHost } from "@cro/shared";
 
 export interface AnalyzeInput {
   pageContext: PageContext;

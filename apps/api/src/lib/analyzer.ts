@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
-import type { PageContext, FormInfo, ButtonInfo, LinkInfo } from "@/lib/cro";
-import { detectChallenge } from "@/lib/challenge";
-import { assertSafeExternalUrl } from "@/lib/net-guard";
+import type { PageContext, FormInfo, ButtonInfo, LinkInfo } from "@cro/shared";
+import { detectChallenge } from "./challenge";
+import { assertSafeExternalUrl } from "./net-guard";
 
 const DESKTOP_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
@@ -58,8 +58,41 @@ export async function analyzePage(url: string): Promise<PageContext> {
     return buildEmptyContext(url, finalUrl, "Empty / non-rendered page", start);
   }
 
+  return extractPageContext(html, url, finalUrl, Date.now() - start, blockReason);
+}
+
+/**
+ * Builds CRO page signals from browser-rendered HTML (post-JS DOM). Used to
+ * recover a usable audit when the plain HTTP fetch was walled by a WAF but the
+ * headless browser rendered the real page. Marked as client-rendered so the
+ * model trusts the accompanying screenshot alongside these DOM signals.
+ */
+export function analyzeRenderedHtml(
+  html: string,
+  url: string,
+  finalUrl: string,
+  loadTimeMs: number
+): PageContext {
+  const ctx = extractPageContext(html, url, finalUrl, loadTimeMs, null);
+  ctx.clientRendered = true;
+  return ctx;
+}
+
+/**
+ * Parses an HTML document (from a plain fetch or a browser render) into the
+ * CRO signals the audit needs. `preBlockReason` carries a block signal detected
+ * before parsing (e.g. an HTTP 403/429 status); challenge detection then runs
+ * over the parsed content unless a reason is already set.
+ */
+export function extractPageContext(
+  html: string,
+  url: string,
+  finalUrl: string,
+  loadTimeMs: number,
+  preBlockReason: string | null = null
+): PageContext {
+  let blockReason: string | null = preBlockReason;
   const $ = cheerio.load(html);
-  const loadTimeMs = Date.now() - start;
 
   const text = (el: cheerio.Cheerio<any>) => el.text().trim().replace(/\s+/g, " ");
 

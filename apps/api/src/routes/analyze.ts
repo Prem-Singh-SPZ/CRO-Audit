@@ -1,57 +1,53 @@
-import { NextResponse } from "next/server";
+import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 
-import { scanRequestSchema } from "@/lib/cro";
-import { analyzePage } from "@/lib/analyzer";
-import { getPageSpeed, fallbackLighthouse } from "@/lib/pagespeed";
-import { captureScreenshots } from "@/lib/screenshot";
-import { generateReport } from "@/lib/ai";
-import { assertSafeExternalUrl, UnsafeUrlError } from "@/lib/net-guard";
-import { getClientIp, rateLimit, RATE_LIMITS } from "@/lib/rate-limit";
-import { groundedLiftLabel } from "@/lib/win-patterns";
-import { logEvent, logError } from "@/lib/logger";
-import { safeHost } from "@/lib/utils";
+import {
+  scanRequestSchema,
+  safeHost,
+  groundedLiftLabel,
+  type ReportResponse,
+} from "@cro/shared";
+import { analyzePage, analyzeRenderedHtml } from "../lib/analyzer";
+import { getPageSpeed, fallbackLighthouse } from "../lib/pagespeed";
+import { captureScreenshots } from "../lib/screenshot";
+import { generateReport } from "../lib/ai";
+import { assertSafeExternalUrl, UnsafeUrlError } from "../lib/net-guard";
+import { getClientIp, rateLimit, RATE_LIMITS } from "../lib/rate-limit";
+import { logEvent, logError } from "../lib/logger";
 import {
   getCachedResult,
   setCachedResult,
   resultCacheKey,
-} from "@/lib/result-cache";
-import type { ReportResponse } from "@/lib/types";
+} from "../lib/result-cache";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-// PageSpeed (15-45s) runs before a vision-LLM call (Opus can take 60-90s), so
-// allow generous headroom. On Vercel this needs a plan whose function limit is
-// >= this value (Pro/Enterprise); Hobby caps at 10s.
-export const maxDuration = 120;
+const analyze = new Hono();
 
-export async function POST(request: Request) {
+analyze.post("/", async (c) => {
   const { limit, windowMs } = RATE_LIMITS.analyze;
-  const rl = rateLimit(`analyze:${getClientIp(request)}`, limit, windowMs);
+  const rl = rateLimit(`analyze:${getClientIp(c.req.raw)}`, limit, windowMs);
   if (!rl.success) {
-    return NextResponse.json(
+    c.header(
+      "Retry-After",
+      String(Math.max(1, Math.ceil((rl.reset - Date.now()) / 1000)))
+    );
+    return c.json(
       { error: "Too many audits. Please wait a moment and try again." },
-      {
-        status: 429,
-        headers: {
-          "Retry-After": String(Math.max(1, Math.ceil((rl.reset - Date.now()) / 1000))),
-        },
-      }
+      429
     );
   }
 
   let body: unknown;
   try {
-    body = await request.json();
+    body = await c.req.json();
   } catch {
-    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    return c.json({ error: "Invalid request body" }, 400);
   }
 
   const parsed = scanRequestSchema.safeParse(body);
   if (!parsed.success) {
     const message =
       parsed.error.issues[0]?.message ?? "Please enter a valid website URL";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return c.json({ error: message }, 400);
   }
 
   const url = parsed.data.url;
@@ -61,25 +57,18 @@ export async function POST(request: Request) {
     primaryTrafficSource: parsed.data.primaryTrafficSource,
   };
 
-  // SSRF guard: reject internal/private/reserved targets (and DNS-rebinding)
-  // before we fetch or launch a browser against the URL.
   try {
     await assertSafeExternalUrl(url);
   } catch (err) {
     if (err instanceof UnsafeUrlError) {
-      return NextResponse.json({ error: err.message }, { status: 400 });
+      return c.json({ error: err.message }, 400);
     }
-    return NextResponse.json(
-      { error: "Please enter a valid website URL." },
-      { status: 400 }
-    );
+    return c.json({ error: "Please enter a valid website URL." }, 400);
   }
 
   const startedAt = Date.now();
   const host = safeHost(url);
 
-  // Serve a recent identical audit from the opt-in cache (no-op unless
-  // ENABLE_RESULT_CACHE=true) to cut cost/latency on repeat scans.
   const cacheKey = resultCacheKey(
     url,
     (process.env.AI_PROVIDER || "mock").toLowerCase(),
@@ -88,38 +77,54 @@ export async function POST(request: Request) {
   const cached = getCachedResult(cacheKey);
   if (cached) {
     logEvent("analyze.cache_hit", { host });
-    return NextResponse.json(cached);
+    return c.json(cached);
   }
 
   logEvent("analyze.start", { host });
 
   try {
-    // Crawl (cheerio), PageSpeed metrics, and screenshots run in parallel.
-    const [pageContext, pageSpeed, screenshotResult] = await Promise.all([
+    const [crawlContext, pageSpeed, screenshotResult] = await Promise.all([
       analyzePage(url),
       getPageSpeed(url),
       captureScreenshots(url),
     ]);
+    let pageContext = crawlContext;
     const screenshots = screenshotResult.screenshots;
     const heroShot = screenshotResult.heroShot;
 
-    // Merge the two independent "blocked" signals: the cheerio fetch and the
-    // headless browser can disagree (one gets a WAF wall, the other real HTML).
-    // If EITHER says blocked, treat the page as unread so we never audit a
-    // challenge page as if it were the real landing page.
+    const renderedRich =
+      !!screenshotResult.rendered &&
+      (screenshotResult.rendered.textLength > 400 ||
+        screenshotResult.rendered.h1Count > 0);
+
+    if (
+      pageContext.blocked &&
+      !screenshotResult.blockedReason &&
+      renderedRich &&
+      screenshotResult.renderedHtml
+    ) {
+      const recovered = analyzeRenderedHtml(
+        screenshotResult.renderedHtml,
+        url,
+        pageContext.finalUrl || url,
+        pageContext.loadTimeMs
+      );
+      if (!recovered.blocked) {
+        logEvent("analyze.recovered_from_block", {
+          host,
+          fetchBlockReason: pageContext.blockReason,
+        });
+        pageContext = recovered;
+      }
+    }
+
     if (screenshotResult.blockedReason && !pageContext.blocked) {
       pageContext.blocked = true;
       pageContext.blockReason = screenshotResult.blockedReason;
     }
 
-    // SPA detection: static HTML crawl looks empty but the rendered page has
-    // real content → client-rendered. Flag it so the LLM trusts the screenshot
-    // instead of reporting false "missing headline/CTA" issues from empty DOM.
-    const crawlThin = pageContext.wordCount < 60 || pageContext.headings.h1.length === 0;
-    const renderedRich =
-      !!screenshotResult.rendered &&
-      (screenshotResult.rendered.textLength > 400 ||
-        screenshotResult.rendered.h1Count > 0);
+    const crawlThin =
+      pageContext.wordCount < 60 || pageContext.headings.h1.length === 0;
     if (!pageContext.blocked && crawlThin && renderedRich) {
       pageContext.clientRendered = true;
     }
@@ -159,6 +164,8 @@ export async function POST(request: Request) {
         completedAt: now,
         shareId: null,
       },
+      blocked: pageContext.blocked,
+      blockReason: pageContext.blocked ? pageContext.blockReason : null,
       report: {
         id: randomUUID(),
         overallScore: report.overallScore,
@@ -183,9 +190,6 @@ export async function POST(request: Request) {
         confidence: i.confidence,
         businessImpact: i.businessImpact,
         suggestedFix: i.suggestedFix,
-        // Ground the displayed lift in Spiralyze's proven A/B pattern data where
-        // the issue category has a comparable bucket; otherwise keep the
-        // model/heuristic estimate. Avoids presenting ungrounded guesses as fact.
         estimatedConversionImpact: groundedLiftLabel(
           i.category,
           i.estimatedConversionImpact
@@ -211,8 +215,6 @@ export async function POST(request: Request) {
         width: s.width,
         height: s.height,
       })),
-      // The "after" mockup is generated out-of-band by /api/mockup (see the
-      // report page) so the slow image model never blocks this audit request.
       mockups: [],
       mockupSeed: heroShot
         ? { image: heroShot.base64, mimeType: heroShot.mimeType }
@@ -226,20 +228,18 @@ export async function POST(request: Request) {
       },
     };
 
-    // Cache successful, non-blocked audits only (blocked/degraded results are
-    // cheap to recompute and may resolve on a retry). No-op unless enabled.
     if (!pageContext.blocked) {
       setCachedResult(cacheKey, response);
     }
 
-    return NextResponse.json(response);
+    return c.json(response);
   } catch (err) {
-    // Log the full error server-side; return a generic message so we never leak
-    // internal implementation details (Puppeteer paths, API errors, etc.).
-    logError("analyze.failed", err, { host, durationMs: Date.now() - startedAt });
-    return NextResponse.json(
-      { error: "Analysis failed. Please try again." },
-      { status: 500 }
-    );
+    logError("analyze.failed", err, {
+      host,
+      durationMs: Date.now() - startedAt,
+    });
+    return c.json({ error: "Analysis failed. Please try again." }, 500);
   }
-}
+});
+
+export default analyze;

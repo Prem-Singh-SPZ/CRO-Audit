@@ -1,15 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "buildCommand": "next build",
-  "functions": {
-    "src/app/api/analyze/route.ts": {
-      "maxDuration": 120,
-      "memory": 1769
-    },
-    "src/app/api/mockup/route.ts": {
-      "maxDuration": 120,
-      "memory": 1024
-    }
-  }
+  "installCommand": "cd ../.. && npm install",
+  "buildCommand": "cd ../.. && npm run build --workspace @cro/web"
 }

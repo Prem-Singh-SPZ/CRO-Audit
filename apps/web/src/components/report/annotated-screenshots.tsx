@@ -10,9 +10,13 @@ import {
   Loader2,
 } from "lucide-react";
 
-import type { IssueDto, ScreenshotDto, MockupDto } from "@/lib/types";
+import {
+  estimateRealisticLift,
+  type IssueDto,
+  type ScreenshotDto,
+  type MockupDto,
+} from "@cro/shared";
 import { SEVERITY_META, scrollToBooking } from "@/lib/report-ui";
-import { estimateRealisticLift } from "@/lib/win-patterns";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

@@ -9,8 +9,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { config } from "@/lib/config";
 import { SEVERITY_META } from "@/lib/report-ui";
-import type { IssueDto, LighthouseDto } from "@/lib/types";
-import type { SeverityLevel } from "@/lib/cro";
+import type { IssueDto, LighthouseDto } from "@cro/shared";
+import type { SeverityLevel } from "@cro/shared";
 
 // Order severities from most to least urgent for the breakdown row.
 const SEVERITY_ORDER: SeverityLevel[] = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];

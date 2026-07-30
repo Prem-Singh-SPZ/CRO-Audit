@@ -24,18 +24,13 @@ const securityHeaders = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Emit a self-contained server build for containerized (Docker) deploys only
-  // (the Dockerfile sets BUILD_STANDALONE=1). Kept opt-in because the extra
-  // build-trace copy step conflicts with locked font assets on some platforms
-  // (Windows) and is unnecessary on Vercel, which uses its own build output.
+  // Optional standalone output for containerized UI deploys (not required for
+  // Vercel Hobby). Set BUILD_STANDALONE=1 to enable.
   output: process.env.BUILD_STANDALONE === "1" ? "standalone" : undefined,
+  transpilePackages: ["@cro/shared"],
   experimental: {
     optimizePackageImports: ["lucide-react", "recharts"],
-    // Keep the headless-Chromium packages external so the binary isn't bundled
-    // / mangled by the build and resolves correctly at runtime.
-    serverComponentsExternalPackages: ["@sparticuz/chromium", "puppeteer-core"],
-    // The app lives in a monorepo (apps/web); trace files from the repo root so
-    // the standalone bundle includes workspace-level dependencies.
+    // Monorepo: trace files from the repo root so workspace deps are included.
     outputFileTracingRoot: path.join(__dirname, "../../"),
   },
   async headers() {

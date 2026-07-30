@@ -9,7 +9,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { scrollToBooking } from "@/lib/report-ui";
 import { safeHost } from "@/lib/utils";
-import type { ReportResponse } from "@/lib/types";
+import type { ReportResponse } from "@cro/shared";
 
 export function ReportHeader({ data }: { data: ReportResponse }) {
   function downloadJson() {

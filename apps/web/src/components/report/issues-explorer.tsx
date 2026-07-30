@@ -3,8 +3,8 @@
 import * as React from "react";
 import { Search } from "lucide-react";
 
-import { SEVERITIES, type SeverityLevel } from "@/lib/cro";
-import type { IssueDto } from "@/lib/types";
+import { SEVERITIES, type SeverityLevel } from "@cro/shared";
+import type { IssueDto } from "@cro/shared";
 import { SEVERITY_META } from "@/lib/report-ui";
 import { IssueCard } from "./issue-card";
 import { cn } from "@/lib/utils";

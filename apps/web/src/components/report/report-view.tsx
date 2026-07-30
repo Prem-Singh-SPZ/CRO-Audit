@@ -4,7 +4,7 @@ import * as React from "react";
 import { motion } from "framer-motion";
 import { Globe, Calendar, Gauge, TrendingUp, AlertTriangle } from "lucide-react";
 
-import type { ReportResponse } from "@/lib/types";
+import type { ReportResponse } from "@cro/shared";
 import { SEVERITY_META, PRIORITY_META, BOOKING_ANCHOR_ID } from "@/lib/report-ui";
 import { formatDate, safeHost } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";

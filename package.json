@@ -4,20 +4,27 @@
   "private": true,
   "description": "CRO Audit AI - AI-powered Conversion Rate Optimization website analyzer",
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "packages/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace apps/web",
-    "build": "npm run build --workspace apps/web",
-    "start": "npm run start --workspace apps/web",
-    "lint": "npm run lint --workspace apps/web",
-    "typecheck": "npm run typecheck --workspace apps/web",
+    "dev": "concurrently -n web,api -c cyan,magenta \"npm run dev:web\" \"npm run dev:api\"",
+    "dev:web": "npm run dev --workspace @cro/web",
+    "dev:api": "npm run dev --workspace @cro/api",
+    "build": "npm run build --workspace @cro/web && npm run build --workspace @cro/api",
+    "build:web": "npm run build --workspace @cro/web",
+    "build:api": "npm run build --workspace @cro/api",
+    "start": "npm run start --workspace @cro/web",
+    "start:api": "npm run start --workspace @cro/api",
+    "lint": "npm run lint --workspace @cro/web",
+    "typecheck": "npm run typecheck --workspace @cro/shared && npm run typecheck --workspace @cro/api && npm run typecheck --workspace @cro/web",
     "test": "vitest run"
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "devDependencies": {
+    "concurrently": "^9.1.2",
     "dotenv-cli": "^11.0.0",
     "prettier": "^3.3.3",
     "typescript": "^5.6.3",

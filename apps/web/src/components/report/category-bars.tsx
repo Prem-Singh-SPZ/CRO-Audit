@@ -5,7 +5,7 @@ import {
   SCORE_CATEGORIES,
   SCORE_CATEGORY_LABELS,
   type CategoryScores,
-} from "@/lib/cro";
+} from "@cro/shared";
 import { scoreColor } from "@/lib/utils";
 
 export function CategoryBars({ scores }: { scores: CategoryScores }) {

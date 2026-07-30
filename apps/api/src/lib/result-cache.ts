@@ -1,4 +1,4 @@
-import type { ReportResponse } from "@/lib/types";
+import type { ReportResponse } from "@cro/shared";
 
 /**
  * Opt-in, bounded in-memory cache for full audit results, keyed by

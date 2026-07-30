@@ -14,7 +14,7 @@ import {
   CalendarClock,
 } from "lucide-react";
 
-import type { IssueDto } from "@/lib/types";
+import type { IssueDto } from "@cro/shared";
 import {
   SEVERITY_META,
   COMPLEXITY_META,

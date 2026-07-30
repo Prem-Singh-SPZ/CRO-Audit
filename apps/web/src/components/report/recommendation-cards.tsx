@@ -2,7 +2,7 @@
 
 import { Zap } from "lucide-react";
 
-import type { RecommendationDto } from "@/lib/types";
+import type { RecommendationDto } from "@cro/shared";
 import { Reveal } from "@/components/reveal";
 
 function scoreFor(r: RecommendationDto): number {

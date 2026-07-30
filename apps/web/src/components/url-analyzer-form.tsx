@@ -12,9 +12,10 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { apiUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { storeReport } from "@/lib/report-store";
-import type { ReportResponse } from "@/lib/types";
+import type { ReportResponse } from "@cro/shared";
 
 // Approximate pipeline stages, keyed by elapsed seconds. Timings mirror the
 // server pipeline (crawl + PageSpeed + screenshot in parallel, then the vision
@@ -73,7 +74,7 @@ export function UrlAnalyzerForm({ className }: { className?: string }) {
     const timeout = setTimeout(() => controller.abort(), 130_000);
 
     try {
-      const res = await fetch("/api/analyze", {
+      const res = await fetch(apiUrl("/api/analyze"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,

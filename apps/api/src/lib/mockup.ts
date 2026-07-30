@@ -1,5 +1,5 @@
-import { sanitizeUntrustedText } from "@/lib/sanitize";
-import { safeHost } from "@/lib/utils";
+import { sanitizeUntrustedText } from "./sanitize";
+import { safeHost } from "@cro/shared";
 
 export interface Mockup {
   device: "desktop" | "mobile";

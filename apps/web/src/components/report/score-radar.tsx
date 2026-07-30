@@ -8,7 +8,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-import { SCORE_CATEGORY_LABELS, type CategoryScores } from "@/lib/cro";
+import { SCORE_CATEGORY_LABELS, type CategoryScores } from "@cro/shared";
 
 export function ScoreRadar({ scores }: { scores: CategoryScores }) {
   const data = (Object.keys(scores) as (keyof CategoryScores)[]).map((key) => ({

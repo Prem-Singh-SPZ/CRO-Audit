@@ -1,0 +1,27 @@
+{
+  "name": "@cro/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "dotenv -e ../../.env -- tsx src/index.ts",
+    "build": "tsc --noEmit",
+    "start": "dotenv -e ../../.env -- tsx src/index.ts",
+    "start:prod": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cro/shared": "*",
+    "@hono/node-server": "^1.14.1",
+    "@sparticuz/chromium": "^149.0.0",
+    "cheerio": "^1.0.0",
+    "hono": "^4.7.5",
+    "puppeteer-core": "^25.3.0",
+    "tsx": "^4.19.3",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "typescript": "^5.6.3"
+  }
+}

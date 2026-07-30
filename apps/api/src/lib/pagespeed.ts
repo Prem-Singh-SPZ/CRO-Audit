@@ -1,4 +1,4 @@
-import type { LighthouseSummary, PageContext } from "@/lib/cro";
+import type { LighthouseSummary, PageContext } from "@cro/shared";
 
 export interface PageSpeedResult {
   lighthouse: LighthouseSummary | null;

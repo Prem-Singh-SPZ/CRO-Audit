@@ -1,4 +1,4 @@
-import type { ReportResponse } from "@/lib/types";
+import type { ReportResponse } from "@cro/shared";
 
 // The analyzer produces a full report in one request; we hand it to the report
 // page via sessionStorage instead of persisting it server-side.

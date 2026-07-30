@@ -1,8 +1,8 @@
 import chromium from "@sparticuz/chromium";
 import puppeteer, { type Browser } from "puppeteer-core";
 
-import { detectChallenge } from "@/lib/challenge";
-import { assertSafeExternalUrl, isBlockedUrlSync } from "@/lib/net-guard";
+import { detectChallenge } from "./challenge";
+import { assertSafeExternalUrl, isBlockedUrlSync } from "./net-guard";
 
 export interface Screenshot {
   device: "desktop" | "mobile";
@@ -34,6 +34,11 @@ export interface ScreenshotResult {
   blockedReason: string | null;
   // Signals from the rendered DOM (null when capture failed/blocked).
   rendered: RenderedSignals | null;
+  // Serialized post-JS DOM of the rendered page (null when capture
+  // failed/blocked). Used to recover CRO signals when the plain HTTP crawl was
+  // walled by a WAF but the headless browser read the real page. Bounded so a
+  // huge document can't blow up function memory.
+  renderedHtml: string | null;
 }
 
 const DESKTOP_UA =
@@ -152,6 +157,7 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
   let heroShot: Screenshot | null = null;
   let blockedReason: string | null = null;
   let rendered: RenderedSignals | null = null;
+  let renderedHtml: string | null = null;
   let browser: Browser | null = null;
 
   // Bound concurrent Chromium instances. If we can't get a slot in time, skip
@@ -159,7 +165,13 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
   const acquired = await acquireSlot();
   if (!acquired) {
     console.warn("[screenshot] skipped — capture concurrency limit reached");
-    return { screenshots, heroShot: null, blockedReason: null, rendered: null };
+    return {
+      screenshots,
+      heroShot: null,
+      blockedReason: null,
+      rendered: null,
+      renderedHtml: null,
+    };
   }
 
   try {
@@ -259,6 +271,12 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
         null
       );
 
+      // Grab the post-JS DOM so the caller can recover CRO signals if the plain
+      // HTTP crawl was walled by a WAF. Bounded (~2MB) so a giant document can't
+      // balloon function memory; time-boxed like every other page op.
+      const html = await raceTimeout(page.content(), PAGE_OP_TIMEOUT_MS, "");
+      renderedHtml = html ? html.slice(0, 2_000_000) : null;
+
       // Read the page dimensions defensively: a client-side redirect can destroy
       // the execution context here, and we must not let that drop the capture.
       const dims = await raceTimeout(
@@ -339,5 +357,5 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
     releaseSlot();
   }
 
-  return { screenshots, heroShot, blockedReason, rendered };
+  return { screenshots, heroShot, blockedReason, rendered, renderedHtml };
 }

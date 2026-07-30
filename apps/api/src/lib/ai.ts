@@ -11,11 +11,11 @@ import {
   type AuditContext,
   type ComplexityLevel,
   type DiyRiskLevel,
-} from "@/lib/cro";
-import { analyzeMock } from "@/lib/mock-ai";
-import { sanitizeUntrustedText } from "@/lib/sanitize";
-import { logEvent, logWarn } from "@/lib/logger";
-import type { Screenshot } from "@/lib/screenshot";
+} from "@cro/shared";
+import { analyzeMock } from "./mock-ai";
+import { sanitizeUntrustedText } from "./sanitize";
+import { logEvent, logWarn } from "./logger";
+import type { Screenshot } from "./screenshot";
 
 export interface GenerateInput {
   pageContext: PageContext;

@@ -2,17 +2,18 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Loader2, SearchX } from "lucide-react";
+import { Loader2, SearchX, ShieldAlert } from "lucide-react";
 
 import { ReportView } from "@/components/report/report-view";
 import { Button } from "@/components/ui/button";
+import { apiUrl } from "@/lib/api";
 import {
   REPORT_STORAGE_KEY,
   storeReport,
   stripMockupSeed,
 } from "@/lib/report-store";
 import { safeHost } from "@/lib/utils";
-import type { MockupResponseDto, ReportResponse } from "@/lib/types";
+import type { MockupResponseDto, ReportResponse } from "@cro/shared";
 
 export default function ReportPage() {
   const [data, setData] = React.useState<ReportResponse | null>(null);
@@ -44,7 +45,7 @@ export default function ReportPage() {
 
     (async () => {
       try {
-        const res = await fetch("/api/mockup", {
+        const res = await fetch(apiUrl("/api/mockup"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
@@ -115,11 +116,87 @@ export default function ReportPage() {
     );
   }
 
+  if (data.blocked) {
+    return <BlockedState data={data} />;
+  }
+
   return (
     <ReportView
       data={data}
       mockupPending={mockupPending}
       mockupError={mockupError}
     />
+  );
+}
+
+// Shown when the target sat behind bot protection and the real page could not
+// be read. We deliberately don't render the neutral placeholder scorecard —
+// that reads like a real (bad) audit. Instead we explain what happened and give
+// the user clear next steps.
+function BlockedState({ data }: { data: ReportResponse }) {
+  const host = safeHost(data.scan.url);
+  const reason = data.blockReason?.toLowerCase() ?? "bot protection";
+
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 px-6 py-16 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-500/30 bg-amber-500/10">
+        <ShieldAlert className="h-6 w-6 text-amber-500" aria-hidden="true" />
+      </div>
+
+      <div className="max-w-lg space-y-3">
+        <h1 className="text-2xl font-semibold tracking-tight">
+          We couldn&apos;t read {host}
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          This site is protected by a security firewall ({reason}) that blocked
+          our automated reader before it could load the real page. That&apos;s a
+          security positive for the site — but it means we couldn&apos;t audit
+          the live content this time.
+        </p>
+      </div>
+
+      <div className="w-full max-w-lg rounded-xl border bg-muted/30 p-5 text-left">
+        <p className="text-sm font-medium">A few things that often work:</p>
+        <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
+          <li className="flex gap-2">
+            <span aria-hidden="true">•</span>
+            <span>
+              <strong className="font-medium text-foreground">Try again</strong>{" "}
+              in a minute — some challenges are intermittent and clear on a
+              second attempt.
+            </span>
+          </li>
+          <li className="flex gap-2">
+            <span aria-hidden="true">•</span>
+            <span>
+              <strong className="font-medium text-foreground">
+                Audit a specific landing page
+              </strong>{" "}
+              (e.g. a campaign or product URL) instead of the gated homepage —
+              those are less likely to sit behind the firewall.
+            </span>
+          </li>
+          <li className="flex gap-2">
+            <span aria-hidden="true">•</span>
+            <span>
+              <strong className="font-medium text-foreground">
+                Request a manual review
+              </strong>{" "}
+              if the whole domain is protected — a human can audit what the
+              crawler can&apos;t reach.
+            </span>
+          </li>
+        </ul>
+      </div>
+
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <Button asChild variant="gradient">
+          <Link href="/#analyze">Analyze another URL</Link>
+        </Button>
+        <Button asChild variant="outline">
+          <Link href="/">Back to home</Link>
+        </Button>
+      </div>
+    </div>
   );
 }

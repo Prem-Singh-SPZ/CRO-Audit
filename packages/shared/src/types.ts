@@ -1,9 +1,9 @@
+import type { SeverityLevel } from "./constants";
 import type {
   CategoryScores,
-  SeverityLevel,
   ComplexityLevel,
   DiyRiskLevel,
-} from "@/lib/cro";
+} from "./schema";
 
 export type ScanStatus = "QUEUED" | "RUNNING" | "COMPLETE" | "FAILED";
 
@@ -82,6 +82,11 @@ export interface LighthouseDto {
 
 export interface ReportResponse {
   scan: ScanStatusResponse & { shareId: string | null };
+  // True when the target served a bot-protection / verification wall and the
+  // real page could not be read. The report fields below are neutral
+  // placeholders in that case; the UI shows a dedicated blocked state instead.
+  blocked?: boolean;
+  blockReason?: string | null;
   report: {
     id: string;
     overallScore: number;
