@@ -122,15 +122,20 @@ function raceTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 }
 
 async function launchBrowser(): Promise<Browser> {
-  // Local dev: point at an installed Chrome/Edge. The serverless Chromium args
-  // (e.g. --single-process) can crash a desktop Chrome, so use a minimal set.
   const localPath = process.env.CHROME_EXECUTABLE_PATH;
   if (localPath) {
     return puppeteer.launch({
       executablePath: localPath,
       headless: true,
       defaultViewport: VIEWPORT,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--no-zygote",
+        "--single-process",
+      ],
     });
   }
 
