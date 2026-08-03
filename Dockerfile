@@ -23,8 +23,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     fonts-liberation \
     fonts-noto-color-emoji \
+    fonts-noto-cjk \
     ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxshmfence1 \
+    libpango-1.0-0 \
+    libnss3 \
+  && rm -rf /var/lib/apt/lists/* \
+  && chromium --version
 
 RUN groupadd --system --gid 1001 nodejs \
   && useradd --system --uid 1001 --gid nodejs apiuser

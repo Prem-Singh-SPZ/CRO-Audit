@@ -124,6 +124,7 @@ function raceTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 async function launchBrowser(): Promise<Browser> {
   const localPath = process.env.CHROME_EXECUTABLE_PATH;
   if (localPath) {
+    console.log(`[screenshot] launching Chromium at ${localPath}`);
     return puppeteer.launch({
       executablePath: localPath,
       headless: true,
@@ -134,7 +135,8 @@ async function launchBrowser(): Promise<Browser> {
         "--disable-dev-shm-usage",
         "--disable-gpu",
         "--no-zygote",
-        "--single-process",
+        "--disable-software-rasterizer",
+        "--disable-extensions",
       ],
     });
   }
@@ -356,7 +358,8 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
       }
     }
   } catch (err) {
-    console.error("[screenshot] capture failed:", err);
+    console.error("[screenshot] capture failed:", (err as Error)?.message ?? err);
+    console.error("[screenshot] stack:", (err as Error)?.stack);
   } finally {
     if (browser) await browser.close().catch(() => {});
     releaseSlot();
