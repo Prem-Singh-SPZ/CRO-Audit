@@ -2,8 +2,8 @@
 # ---------------------------------------------------------------------------
 # CRO Audit API — GCP Cloud Run.
 #
-# Uses @sparticuz/chromium (bundled serverless binary) for screenshots —
-# Debian system Chromium crashes on Cloud Run (SIGTRAP / crashpad).
+# Screenshots use @sparticuz/chromium (bundled serverless binary). That binary
+# still needs a few OS shared libraries (e.g. libnspr4.so / libnss3).
 #
 # Build from the MONOREPO ROOT:
 #   docker build -t cro-audit-api .
@@ -20,18 +20,35 @@ ENV NODE_ENV=production
 ENV PORT=8080
 ENV PUPPETEER_SKIP_DOWNLOAD=1
 ENV NEXT_TELEMETRY_DISABLED=1
-# Do NOT set CHROME_EXECUTABLE_PATH here — that forces broken system Chromium.
-# Screenshots use @sparticuz/chromium from node_modules instead.
+# Do NOT set CHROME_EXECUTABLE_PATH — screenshots use @sparticuz/chromium.
 ENV HOME=/tmp
 ENV XDG_CONFIG_HOME=/tmp/.chromium
 ENV XDG_CACHE_HOME=/tmp/.chromium
 
-# Fonts only (needed for readable screenshots). No apt chromium package.
+# Shared libs required by @sparticuz/chromium + fonts for readable screenshots.
+# (Do not install the apt `chromium` package — it SIGTRAPs on Cloud Run.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     fonts-liberation \
     fonts-noto-color-emoji \
     fonts-noto-cjk \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    libatspi2.0-0 \
+    libxshmfence1 \
+    libpango-1.0-0 \
+    libcairo2 \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /tmp/.chromium \
   && chmod 777 /tmp/.chromium
