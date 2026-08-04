@@ -121,30 +121,68 @@ function raceTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   ]).finally(() => clearTimeout(timer));
 }
 
+// Cloud Run / Docker Chromium flags. Avoid --single-process / --no-zygote —
+// they commonly cause SIGTRAP (signal 5) crashes in containers.
+const CONTAINER_CHROME_ARGS = [
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+  "--disable-dev-shm-usage",
+  "--disable-gpu",
+  "--disable-software-rasterizer",
+  "--disable-extensions",
+  "--disable-background-networking",
+  "--disable-default-apps",
+  "--disable-sync",
+  "--disable-translate",
+  "--disable-crash-reporter",
+  "--disable-breakpad",
+  "--no-first-run",
+  "--no-default-browser-check",
+  "--metrics-recording-only",
+  "--mute-audio",
+  "--hide-scrollbars",
+  "--font-render-hinting=none",
+];
+
+async function resolveChromePath(): Promise<string | null> {
+  const { access } = await import("node:fs/promises");
+  const candidates = [
+    process.env.CHROME_EXECUTABLE_PATH,
+    "/usr/lib/chromium/chromium",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+  ].filter(Boolean) as string[];
+
+  for (const candidate of candidates) {
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      // try next
+    }
+  }
+  return null;
+}
+
 async function launchBrowser(): Promise<Browser> {
-  const localPath = process.env.CHROME_EXECUTABLE_PATH;
+  const localPath = await resolveChromePath();
   if (localPath) {
     console.log(`[screenshot] launching Chromium at ${localPath}`);
     return puppeteer.launch({
       executablePath: localPath,
       headless: true,
       defaultViewport: VIEWPORT,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--no-zygote",
-        "--disable-software-rasterizer",
-        "--disable-extensions",
-      ],
+      // Surface Chromium stderr into Cloud Run logs when debugging.
+      dumpio: process.env.CHROME_DUMPIO === "1",
+      args: CONTAINER_CHROME_ARGS,
     });
   }
 
-  // Serverless (Vercel): use the bundled, brotli-compressed Chromium binary.
+  // Fallback: bundled serverless Chromium (@sparticuz/chromium).
+  console.log("[screenshot] system Chromium not found — using @sparticuz/chromium");
   chromium.setGraphicsMode = false;
   return puppeteer.launch({
-    args: chromium.args,
+    args: [...chromium.args, "--disable-dev-shm-usage", "--disable-crash-reporter"],
     defaultViewport: VIEWPORT,
     executablePath: await chromium.executablePath(),
     headless: true,
