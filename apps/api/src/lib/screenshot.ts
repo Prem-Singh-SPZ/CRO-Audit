@@ -121,71 +121,50 @@ function raceTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   ]).finally(() => clearTimeout(timer));
 }
 
-// Cloud Run / Docker Chromium flags. Avoid --single-process / --no-zygote —
-// they commonly cause SIGTRAP (signal 5) crashes in containers.
-const CONTAINER_CHROME_ARGS = [
+// Local desktop Chrome/Edge flags (Windows/macOS/Linux). Keep these minimal —
+// serverless flags like --single-process can crash a full desktop Chrome.
+const LOCAL_CHROME_ARGS = [
   "--no-sandbox",
   "--disable-setuid-sandbox",
   "--disable-dev-shm-usage",
-  "--disable-gpu",
-  "--disable-software-rasterizer",
-  "--disable-extensions",
-  "--disable-background-networking",
-  "--disable-default-apps",
-  "--disable-sync",
-  "--disable-translate",
-  "--disable-crash-reporter",
-  "--disable-breakpad",
-  "--no-first-run",
-  "--no-default-browser-check",
-  "--metrics-recording-only",
-  "--mute-audio",
-  "--hide-scrollbars",
-  "--font-render-hinting=none",
 ];
 
-async function resolveChromePath(): Promise<string | null> {
-  const { access } = await import("node:fs/promises");
-  const candidates = [
-    process.env.CHROME_EXECUTABLE_PATH,
-    "/usr/lib/chromium/chromium",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-  ].filter(Boolean) as string[];
-
-  for (const candidate of candidates) {
-    try {
-      await access(candidate);
-      return candidate;
-    } catch {
-      // try next
-    }
-  }
-  return null;
-}
-
+/**
+ * Launch strategy:
+ * - Local / explicit: CHROME_EXECUTABLE_PATH → installed Chrome/Edge
+ * - Cloud Run / Docker: @sparticuz/chromium (Debian system Chromium SIGTRAPs
+ *   on Cloud Run — signal 5 + crashpad — so we do NOT auto-detect /usr/bin/chromium)
+ */
 async function launchBrowser(): Promise<Browser> {
-  const localPath = await resolveChromePath();
+  const localPath = process.env.CHROME_EXECUTABLE_PATH?.trim();
+
   if (localPath) {
-    console.log(`[screenshot] launching Chromium at ${localPath}`);
+    console.log(`[screenshot] launching local Chrome at ${localPath}`);
     return puppeteer.launch({
       executablePath: localPath,
       headless: true,
       defaultViewport: VIEWPORT,
-      // Surface Chromium stderr into Cloud Run logs when debugging.
       dumpio: process.env.CHROME_DUMPIO === "1",
-      args: CONTAINER_CHROME_ARGS,
+      args: LOCAL_CHROME_ARGS,
     });
   }
 
-  // Fallback: bundled serverless Chromium (@sparticuz/chromium).
-  console.log("[screenshot] system Chromium not found — using @sparticuz/chromium");
+  console.log("[screenshot] launching @sparticuz/chromium (serverless binary)");
   chromium.setGraphicsMode = false;
+  const executablePath = await chromium.executablePath();
+  console.log(`[screenshot] sparticuz binary: ${executablePath}`);
+
   return puppeteer.launch({
-    args: [...chromium.args, "--disable-dev-shm-usage", "--disable-crash-reporter"],
+    args: [
+      ...chromium.args,
+      "--disable-dev-shm-usage",
+      "--disable-crash-reporter",
+      "--disable-gpu",
+    ],
     defaultViewport: VIEWPORT,
-    executablePath: await chromium.executablePath(),
+    executablePath,
     headless: true,
+    dumpio: process.env.CHROME_DUMPIO === "1",
   });
 }
 
