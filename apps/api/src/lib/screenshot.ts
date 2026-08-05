@@ -202,6 +202,13 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
     browser = await launchBrowser();
     const page = await browser.newPage();
     await page.setUserAgent(DESKTOP_UA);
+    await page.setExtraHTTPHeaders({ "Accept-Language": "en-US,en;q=0.9" });
+    // Basic fingerprint hardening: hide the headless `navigator.webdriver`
+    // flag so naive bot checks don't wall us. Won't defeat geo-blocks or
+    // advanced (DataDome-class) protection.
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+    });
     page.setDefaultNavigationTimeout(NAV_TIMEOUT_MS);
 
     // SSRF guard for the browser: abort any request (including redirects and

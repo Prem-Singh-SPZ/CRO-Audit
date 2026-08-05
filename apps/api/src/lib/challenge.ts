@@ -24,6 +24,19 @@ const MARKERS: { pattern: RegExp; reason: string }[] = [
     reason: "CAPTCHA",
   },
   { pattern: /access denied|ddos protection|request blocked/i, reason: "WAF block" },
+  // Geo/region restrictions are distinct from bot protection: the site limits
+  // access by country, so retrying or changing UA won't help. Detecting this
+  // lets the UI set honest expectations instead of promising a retry.
+  {
+    pattern: /not available in your (country|region|location)/i,
+    reason: "Region restricted",
+  },
+  {
+    pattern:
+      /access (?:from your|is)\s?(?:country|region|location).{0,20}(restricted|blocked|denied)/i,
+    reason: "Region restricted",
+  },
+  { pattern: /geo[- ]?(restricted|blocked|blocking)/i, reason: "Region restricted" },
   {
     pattern: /(incapsula|imperva|datadome|perimeterx|distil networks)/i,
     reason: "Bot protection",

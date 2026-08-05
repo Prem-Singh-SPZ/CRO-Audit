@@ -6,6 +6,73 @@ import { assertSafeExternalUrl } from "./net-guard";
 const DESKTOP_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
+// Browser-like request headers. Some WAFs gate on the presence of Chrome
+// client hints and fetch-metadata rather than fingerprinting deeply, so sending
+// a realistic navigation set reduces false "bot" blocks on lightly protected
+// sites. This won't defeat geo-restrictions or advanced (DataDome-class) WAFs.
+const BROWSER_HEADERS: Record<string, string> = {
+  "User-Agent": DESKTOP_UA,
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Upgrade-Insecure-Requests": "1",
+  "sec-ch-ua": '"Chromium";v="125", "Not.A/Brand";v="24", "Google Chrome";v="125"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"Windows"',
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+};
+
+const FETCH_TIMEOUT_MS = 20_000;
+const MAX_FETCH_ATTEMPTS = 2;
+
+/**
+ * Fetches the URL with a browser-like header set, retrying once on transient
+ * blocks (403/429) or network/timeout failures. Some challenge pages are
+ * intermittent and clear on a second attempt, so a short jittered backoff
+ * meaningfully cuts false blocks without materially growing latency.
+ */
+async function fetchWithRetry(url: string): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_FETCH_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        redirect: "follow",
+        signal: controller.signal,
+        headers: BROWSER_HEADERS,
+      });
+      clearTimeout(timeout);
+      // Retry transient WAF/rate-limit statuses once; otherwise return as-is.
+      if (
+        (res.status === 403 || res.status === 429) &&
+        attempt < MAX_FETCH_ATTEMPTS
+      ) {
+        await delayWithJitter(attempt);
+        continue;
+      }
+      return res;
+    } catch (err) {
+      clearTimeout(timeout);
+      lastError = err;
+      if (attempt < MAX_FETCH_ATTEMPTS) {
+        await delayWithJitter(attempt);
+        continue;
+      }
+    }
+  }
+  throw lastError ?? new Error("fetch failed");
+}
+
+function delayWithJitter(attempt: number): Promise<void> {
+  const base = 800 * attempt;
+  const jitter = Math.floor(Math.random() * 400);
+  return new Promise((r) => setTimeout(r, base + jitter));
+}
+
 const CTA_KEYWORDS =
   /(get started|start free|sign up|signup|buy now|try|book|request|subscribe|download|contact|get my|claim|get a demo|demo|schedule|talk to|learn more|see (a )?demo|free trial|join)/i;
 
@@ -23,19 +90,7 @@ export async function analyzePage(url: string): Promise<PageContext> {
   let blockReason: string | null = null;
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20_000);
-    const res = await fetch(url, {
-      redirect: "follow",
-      signal: controller.signal,
-      headers: {
-        "User-Agent": DESKTOP_UA,
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-    });
-    clearTimeout(timeout);
+    const res = await fetchWithRetry(url);
     finalUrl = res.url || url;
     // Redirect SSRF guard: a public URL can 30x into an internal host. Validate
     // the post-redirect URL before we trust/parse anything from it.

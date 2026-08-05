@@ -129,13 +129,82 @@ export default function ReportPage() {
   );
 }
 
-// Shown when the target sat behind bot protection and the real page could not
-// be read. We deliberately don't render the neutral placeholder scorecard —
-// that reads like a real (bad) audit. Instead we explain what happened and give
-// the user clear next steps.
+type BlockTip = { title: string; body: string };
+
+type BlockKind = "region" | "empty" | "bot";
+
+function classifyBlock(reason: string | null | undefined): BlockKind {
+  const r = (reason ?? "").toLowerCase();
+  if (r.includes("region")) return "region";
+  if (r.includes("empty") || r.includes("non-rendered")) return "empty";
+  return "bot";
+}
+
+// Copy tailored to each block kind. We deliberately avoid promising a retry for
+// region restrictions (a country block won't clear on a second attempt) or for
+// empty pages (a retry rarely helps there).
+function blockCopy(kind: BlockKind, host: string): {
+  lead: string;
+  tips: BlockTip[];
+} {
+  switch (kind) {
+    case "region":
+      return {
+        lead: `${host} restricts access by country or region, so our automated reader — which runs from a data center outside that region — can't load the page. This isn't something a retry will fix.`,
+        tips: [
+          {
+            title: "Audit a region-neutral page",
+            body: "Some campaign or product URLs aren't geo-gated. Try a more specific landing page if you have one.",
+          },
+          {
+            title: "Request a manual review",
+            body: "A human on an allowed connection can audit what our crawler can't reach.",
+          },
+        ],
+      };
+    case "empty":
+      return {
+        lead: `We reached ${host} but couldn't extract a real page. It may require JavaScript we couldn't render, sit behind a login, or the URL may be incorrect.`,
+        tips: [
+          {
+            title: "Double-check the URL",
+            body: "Make sure it points to a public page and includes the right path.",
+          },
+          {
+            title: "Try a specific landing page",
+            body: "A direct campaign or product URL is often easier to read than an app shell or gated homepage.",
+          },
+        ],
+      };
+    default:
+      return {
+        lead: `This site is protected by a security firewall that blocked our automated reader before it could load the real page. That's a security positive for the site — but it means we couldn't audit the live content this time.`,
+        tips: [
+          {
+            title: "Try again",
+            body: "in a minute — some challenges are intermittent and clear on a second attempt.",
+          },
+          {
+            title: "Audit a specific landing page",
+            body: "(e.g. a campaign or product URL) instead of the gated homepage — those are less likely to sit behind the firewall.",
+          },
+          {
+            title: "Request a manual review",
+            body: "if the whole domain is protected — a human can audit what the crawler can't reach.",
+          },
+        ],
+      };
+  }
+}
+
+// Shown when the target could not be read. We deliberately don't render the
+// neutral placeholder scorecard — that reads like a real (bad) audit. Instead
+// we explain what happened, tailored to the reason, and give clear next steps.
 function BlockedState({ data }: { data: ReportResponse }) {
   const host = safeHost(data.scan.url);
   const reason = data.blockReason?.toLowerCase() ?? "bot protection";
+  const kind = classifyBlock(data.blockReason);
+  const { lead, tips } = blockCopy(kind, host);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-6 px-6 py-16 text-center">
@@ -147,51 +216,37 @@ function BlockedState({ data }: { data: ReportResponse }) {
         <h1 className="text-2xl font-semibold tracking-tight">
           We couldn&apos;t read {host}
         </h1>
-        <p className="text-sm text-muted-foreground">
-          This site is protected by a security firewall ({reason}) that blocked
-          our automated reader before it could load the real page. That&apos;s a
-          security positive for the site — but it means we couldn&apos;t audit
-          the live content this time.
-        </p>
+        <p className="text-sm text-muted-foreground">{lead}</p>
+        {kind !== "region" && (
+          <p className="text-xs text-muted-foreground/70">Reason: {reason}</p>
+        )}
       </div>
 
       <div className="w-full max-w-lg rounded-xl border bg-muted/30 p-5 text-left">
         <p className="text-sm font-medium">A few things that often work:</p>
         <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
-          <li className="flex gap-2">
-            <span aria-hidden="true">•</span>
-            <span>
-              <strong className="font-medium text-foreground">Try again</strong>{" "}
-              in a minute — some challenges are intermittent and clear on a
-              second attempt.
-            </span>
-          </li>
-          <li className="flex gap-2">
-            <span aria-hidden="true">•</span>
-            <span>
-              <strong className="font-medium text-foreground">
-                Audit a specific landing page
-              </strong>{" "}
-              (e.g. a campaign or product URL) instead of the gated homepage —
-              those are less likely to sit behind the firewall.
-            </span>
-          </li>
-          <li className="flex gap-2">
-            <span aria-hidden="true">•</span>
-            <span>
-              <strong className="font-medium text-foreground">
-                Request a manual review
-              </strong>{" "}
-              if the whole domain is protected — a human can audit what the
-              crawler can&apos;t reach.
-            </span>
-          </li>
+          {tips.map((tip) => (
+            <li key={tip.title} className="flex gap-2">
+              <span aria-hidden="true">•</span>
+              <span>
+                <strong className="font-medium text-foreground">
+                  {tip.title}
+                </strong>{" "}
+                {tip.body}
+              </span>
+            </li>
+          ))}
         </ul>
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row">
         <Button asChild variant="gradient">
           <Link href="/#analyze">Analyze another URL</Link>
+        </Button>
+        <Button asChild variant="outline">
+          <a href={data.scan.url} target="_blank" rel="noopener noreferrer">
+            Open the page directly
+          </a>
         </Button>
         <Button asChild variant="outline">
           <Link href="/">Back to home</Link>
