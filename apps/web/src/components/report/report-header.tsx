@@ -137,7 +137,7 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
             <DialogTitle>Share this report</DialogTitle>
             <DialogDescription>
               Anyone with this link can view the full read-only report — no login
-              required.
+              required. Links stay active for about 30 days.
             </DialogDescription>
           </DialogHeader>
 
