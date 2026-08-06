@@ -2,16 +2,31 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Download, FileJson, Zap } from "lucide-react";
+import { upload } from "@vercel/blob/client";
+import { Check, Copy, Download, FileJson, Loader2, Share2, Zap } from "lucide-react";
 
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { scrollToBooking } from "@/lib/report-ui";
+import { stripMockupSeed } from "@/lib/report-store";
 import { safeHost } from "@/lib/utils";
 import type { ReportResponse } from "@cro/shared";
 
 export function ReportHeader({ data }: { data: ReportResponse }) {
+  const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [sharing, setSharing] = React.useState(false);
+  const [shareUrl, setShareUrl] = React.useState<string | null>(null);
+  const [shareError, setShareError] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState(false);
+
   function downloadJson() {
     const blob = new Blob([JSON.stringify(data, null, 2)], {
       type: "application/json",
@@ -27,11 +42,56 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
     URL.revokeObjectURL(url);
   }
 
+  async function shareReport() {
+    setDialogOpen(true);
+    if (shareUrl) return; // Already generated for this report — reuse the link.
+    setSharing(true);
+    setShareError(null);
+    try {
+      const id = crypto.randomUUID();
+      // Drop the one-time mockup seed; the generated image already lives in
+      // `mockups[]`, so this keeps the stored payload smaller.
+      const payload = JSON.stringify(stripMockupSeed(data));
+      await upload(`reports/${id}.json`, payload, {
+        access: "public",
+        handleUploadUrl: "/api/share/upload",
+        contentType: "application/json",
+      });
+      setShareUrl(`${window.location.origin}/share/${id}`);
+    } catch {
+      setShareError(
+        "We couldn't create a share link. Sharing may not be configured yet — please try again later."
+      );
+    } finally {
+      setSharing(false);
+    }
+  }
+
+  async function copyLink() {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard blocked — the input stays selectable for manual copy.
+    }
+  }
+
   return (
     <header className="sticky top-0 z-30 border-b bg-background/80 backdrop-blur-xl print:hidden">
       <div className="container flex h-16 items-center justify-between">
         <Logo />
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={shareReport}
+            className="hidden sm:inline-flex"
+          >
+            <Share2 className="h-4 w-4" />
+            Share
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -70,6 +130,55 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
           <ThemeToggle />
         </div>
       </div>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Share this report</DialogTitle>
+            <DialogDescription>
+              Anyone with this link can view the full read-only report — no login
+              required.
+            </DialogDescription>
+          </DialogHeader>
+
+          {sharing ? (
+            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Creating your share link…
+            </div>
+          ) : shareError ? (
+            <p className="py-2 text-sm text-destructive">{shareError}</p>
+          ) : shareUrl ? (
+            <div className="flex items-center gap-2">
+              <input
+                readOnly
+                value={shareUrl}
+                onFocus={(e) => e.currentTarget.select()}
+                className="h-10 flex-1 rounded-full border border-input bg-background/50 px-4 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={copyLink}
+                className="shrink-0"
+              >
+                {copied ? (
+                  <>
+                    <Check className="h-4 w-4" />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4" />
+                    Copy
+                  </>
+                )}
+              </Button>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </header>
   );
 }
