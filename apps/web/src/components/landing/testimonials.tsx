@@ -1,4 +1,4 @@
-import { Star } from "lucide-react";
+import { Star, Quote } from "lucide-react";
 
 import { Reveal } from "@/components/reveal";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -43,6 +43,8 @@ const TESTIMONIALS = [
 ];
 
 export function Testimonials() {
+  const [featured, ...rest] = TESTIMONIALS;
+
   return (
     <section id="testimonials" className="border-y bg-muted/30 py-24">
       <div className="container">
@@ -55,10 +57,31 @@ export function Testimonials() {
           </h2>
         </Reveal>
 
-        <div className="mt-16 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {TESTIMONIALS.map((t, i) => (
+        {/* Featured testimonial — gradient/holographic treatment */}
+        <Reveal delay={1}>
+          <figure className="relative mt-14 overflow-hidden rounded-3xl border border-primary/20 bg-gradient-to-br from-primary/10 via-card to-brand/10 p-8 shadow-xl shadow-primary/5 sm:p-12">
+            <div className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-primary/20 blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-24 -left-10 h-56 w-56 rounded-full bg-brand/20 blur-3xl" />
+            <Quote className="relative h-10 w-10 text-primary/40" />
+            <blockquote className="relative mt-5 max-w-3xl text-balance text-xl font-medium leading-relaxed sm:text-2xl">
+              &ldquo;{featured.quote}&rdquo;
+            </blockquote>
+            <figcaption className="relative mt-8 flex items-center gap-3">
+              <Avatar className="h-11 w-11">
+                <AvatarFallback>{featured.name[0]}</AvatarFallback>
+              </Avatar>
+              <div>
+                <div className="font-semibold">{featured.name}</div>
+                <div className="text-sm text-muted-foreground">{featured.role}</div>
+              </div>
+            </figcaption>
+          </figure>
+        </Reveal>
+
+        <div className="mt-6 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {rest.map((t, i) => (
             <Reveal key={t.name} delay={i}>
-              <figure className="card-premium flex h-full flex-col p-8">
+              <figure className="card-premium flex h-full flex-col p-8 hover:-translate-y-1">
                 <div className="flex gap-0.5 text-warning">
                   {Array.from({ length: 5 }).map((_, idx) => (
                     <Star key={idx} className="h-4 w-4 fill-current" />

@@ -61,6 +61,10 @@ const NAV_TIMEOUT_MS = 30_000;
 // so a stuck page degrades to "no screenshot" instead of hanging the request.
 const PAGE_OP_TIMEOUT_MS = 6_000;
 const SCREENSHOT_TIMEOUT_MS = 20_000;
+// Max time to wait for a JS-heavy SPA to actually paint real content before we
+// capture. Without this, pages that only reach `domcontentloaded` (a blank/
+// "Loading…" shell, e.g. some marketing SPAs) get captured white.
+const CONTENT_WAIT_MS = 12_000;
 
 // Cap concurrent Chromium instances so a burst of audits can't OOM the
 // function (each headless Chromium is memory-hungry). Requests beyond the cap
@@ -251,6 +255,19 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
     await page
       .waitForNetworkIdle({ idleTime: 500, timeout: 8000 })
       .catch(() => {});
+    // Wait for the page to actually paint meaningful content before capturing.
+    // Client-rendered SPAs reach `domcontentloaded` with only a blank/"Loading…"
+    // shell; without this we'd screenshot a white frame. Bounded + swallowed so
+    // a page that legitimately has little text still proceeds to capture.
+    await page
+      .waitForFunction(
+        () => {
+          const t = (document.body?.innerText ?? "").trim();
+          return t.length > 200 && !/^loading/i.test(t);
+        },
+        { timeout: CONTENT_WAIT_MS }
+      )
+      .catch(() => {});
     // Let late-loading hero animations / lazy content settle.
     await new Promise((r) => setTimeout(r, 1500));
 
@@ -302,6 +319,19 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
         null
       );
 
+      // If the page still rendered essentially no content after waiting (a blank
+      // SPA shell or a stuck "Loading…" screen), treat it as a non-rendered page
+      // instead of capturing — and scoring — a white frame. Conservative
+      // thresholds avoid false-positives on legitimately sparse pages.
+      if (rendered && rendered.textLength < 40 && rendered.h1Count === 0) {
+        blockedReason = "Empty / non-rendered page";
+        console.warn(
+          `[screenshot] blank render for ${url} — marking as non-rendered`
+        );
+      }
+    }
+
+    if (!blockedReason) {
       // Grab the post-JS DOM so the caller can recover CRO signals if the plain
       // HTTP crawl was walled by a WAF. Bounded (~2MB) so a giant document can't
       // balloon function memory; time-boxed like every other page op.

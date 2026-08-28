@@ -2,7 +2,13 @@
 
 import * as React from "react";
 import { motion } from "framer-motion";
-import { Globe, Calendar, Gauge, TrendingUp, AlertTriangle } from "lucide-react";
+import {
+  Globe,
+  Calendar,
+  Gauge,
+  TrendingUp,
+  AlertTriangle,
+} from "lucide-react";
 
 import type { ReportResponse } from "@cro/shared";
 import { SEVERITY_META, PRIORITY_META, BOOKING_ANCHOR_ID } from "@/lib/report-ui";
@@ -18,9 +24,13 @@ import { PriorityMatrix } from "./priority-matrix";
 import { LighthousePanel } from "./lighthouse-panel";
 import { IssuesExplorer } from "./issues-explorer";
 import { RecommendationCards } from "./recommendation-cards";
+import { ExperimentCards } from "./experiment-cards";
 import { AgencyCta } from "./agency-cta";
 import { ReportHeader } from "./report-header";
 import { ConversionImpactPanel } from "./conversion-impact-panel";
+import { ReportGateProvider, Locked } from "./report-gate";
+import { EmailReportButton } from "./email-report-button";
+import { Reveal } from "@/components/reveal";
 import { FloatingContact } from "@/components/contact/floating-contact";
 import type { ContactContext } from "@/components/contact/types";
 
@@ -56,6 +66,7 @@ export function ReportView({
   const hasScreenshots = screenshots.some((s) => s.url);
 
   return (
+    <ReportGateProvider issueCount={issues.length} readOnly={readOnly}>
     <div className="min-h-screen pb-24">
       {readOnly ? (
         <ReadOnlyHeader host={host} />
@@ -65,6 +76,113 @@ export function ReportView({
 
       <main id="main-content" tabIndex={-1} className="container mt-10">
         <div className="space-y-10">
+        {/* Screenshot + all detailed tabs lead the report, gated behind email */}
+        <Locked
+          title={`Unlock all ${issues.length} issues & experiments`}
+          description="Verify your email to reveal every issue, prioritized experiments, before/after fixes, and your full action plan. It's free."
+        >
+          <div className="space-y-10">
+          <Tabs
+            defaultValue={hasScreenshots ? "screenshots" : "categories"}
+            className="w-full"
+          >
+            <div className="overflow-x-auto pb-1">
+              <TabsList>
+                {hasScreenshots && (
+                  <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
+                )}
+                <TabsTrigger value="categories">Categories</TabsTrigger>
+                <TabsTrigger value="performance">Performance</TabsTrigger>
+                <TabsTrigger value="issues">Issues ({issues.length})</TabsTrigger>
+                <TabsTrigger value="plan">Action plan</TabsTrigger>
+              </TabsList>
+            </div>
+
+            {hasScreenshots && (
+              <TabsContent value="screenshots">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Annotated screenshots</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <AnnotatedScreenshots
+                      screenshots={screenshots}
+                      issues={issues}
+                      mockups={mockups}
+                      mockupPending={mockupPending}
+                      mockupError={mockupError}
+                    />
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            )}
+
+            <TabsContent value="categories">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Category breakdown</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <CategoryBars scores={report.categoryScores} />
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="performance">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Lighthouse performance</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {lighthouse ? (
+                    <LighthousePanel lighthouse={lighthouse} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Lighthouse data unavailable for this scan.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="issues">
+              <IssuesExplorer issues={issues} />
+            </TabsContent>
+
+            <TabsContent value="plan">
+              <div className="space-y-8">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Priority matrix</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <PriorityMatrix recommendations={recommendations} />
+                  </CardContent>
+                </Card>
+                <div>
+                  <h3 className="mb-4 text-lg font-semibold">
+                    Prioritized recommendations
+                  </h3>
+                  <RecommendationCards recommendations={recommendations} />
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          {/* Suggested experiments — its own section directly below the
+              screenshot-led tabs, under the same email lock */}
+          <Card>
+            <CardContent className="pt-6">
+              <ExperimentCards
+                issues={issues}
+                screenshots={screenshots}
+                mockups={mockups}
+              />
+            </CardContent>
+          </Card>
+          </div>
+        </Locked>
+
         {/* Summary hero */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
@@ -117,103 +235,22 @@ export function ReportView({
                 </div>
               </div>
             )}
+            {!readOnly && (
+              <div className="mt-5 border-t pt-5">
+                <EmailReportButton data={data} />
+              </div>
+            )}
           </Card>
         </motion.div>
 
         {/* Evidence-based conversion snapshot — real audit counts + measured
             page speed framed against Google's published research. */}
-        <ConversionImpactPanel issues={issues} lighthouse={lighthouse} />
+        <Reveal>
+          <ConversionImpactPanel issues={issues} lighthouse={lighthouse} />
+        </Reveal>
 
-        {/* Detailed tabs — screenshots first when available, else categories */}
-        <Tabs
-          defaultValue={hasScreenshots ? "screenshots" : "categories"}
-          className="w-full"
-        >
-          <div className="overflow-x-auto pb-1">
-            <TabsList>
-              {hasScreenshots && (
-                <TabsTrigger value="screenshots">Screenshots</TabsTrigger>
-              )}
-              <TabsTrigger value="categories">Categories</TabsTrigger>
-              <TabsTrigger value="performance">Performance</TabsTrigger>
-              <TabsTrigger value="issues">Issues ({issues.length})</TabsTrigger>
-              <TabsTrigger value="plan">Action plan</TabsTrigger>
-            </TabsList>
-          </div>
-
-          {hasScreenshots && (
-            <TabsContent value="screenshots">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Annotated screenshots</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <AnnotatedScreenshots
-                    screenshots={screenshots}
-                    issues={issues}
-                    mockups={mockups}
-                    mockupPending={mockupPending}
-                    mockupError={mockupError}
-                  />
-                </CardContent>
-              </Card>
-            </TabsContent>
-          )}
-
-          <TabsContent value="categories">
-            <Card>
-              <CardHeader>
-                <CardTitle>Category breakdown</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <CategoryBars scores={report.categoryScores} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="performance">
-            <Card>
-              <CardHeader>
-                <CardTitle>Lighthouse performance</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {lighthouse ? (
-                  <LighthousePanel lighthouse={lighthouse} />
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    Lighthouse data unavailable for this scan.
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="issues">
-            <IssuesExplorer issues={issues} />
-          </TabsContent>
-
-          <TabsContent value="plan">
-            <div className="space-y-8">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Priority matrix</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <PriorityMatrix recommendations={recommendations} />
-                </CardContent>
-              </Card>
-              <div>
-                <h3 className="mb-4 text-lg font-semibold">
-                  Prioritized recommendations
-                </h3>
-                <RecommendationCards recommendations={recommendations} />
-              </div>
-            </div>
-          </TabsContent>
-        </Tabs>
-
-        {/* Radar + top opportunities */}
-        <div className="grid gap-6 lg:grid-cols-2">
+        {/* Free teaser: high-level category scorecard + top opportunities */}
+        <Reveal className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader>
               <CardTitle>Category scores</CardTitle>
@@ -250,7 +287,7 @@ export function ReportView({
               })}
             </CardContent>
           </Card>
-          </div>
+        </Reveal>
         </div>
 
         <div id={BOOKING_ANCHOR_ID} className="mt-12 scroll-mt-24">
@@ -262,6 +299,7 @@ export function ReportView({
           CRO team from anywhere in the report. */}
       <FloatingContact context={contactContext} />
     </div>
+    </ReportGateProvider>
   );
 }
 

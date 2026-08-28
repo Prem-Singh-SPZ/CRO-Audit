@@ -92,6 +92,29 @@ const config: Config = {
           "0%, 100%": { backgroundPosition: "0% 50%" },
           "50%": { backgroundPosition: "100% 50%" },
         },
+        marquee: {
+          from: { transform: "translateX(0)" },
+          to: { transform: "translateX(-50%)" },
+        },
+        float: {
+          "0%, 100%": { transform: "translateY(0)" },
+          "50%": { transform: "translateY(-10px)" },
+        },
+        aurora: {
+          "0%, 100%": { transform: "translate3d(0, 0, 0) scale(1)" },
+          "33%": { transform: "translate3d(6%, 8%, 0) scale(1.12)" },
+          "66%": { transform: "translate3d(-6%, -4%, 0) scale(0.95)" },
+        },
+        "glow-pulse": {
+          "0%, 100%": {
+            boxShadow: "0 0 40px -18px hsl(var(--primary) / 0.45)",
+          },
+          "50%": { boxShadow: "0 0 70px -12px hsl(var(--primary) / 0.75)" },
+        },
+        "reveal-up": {
+          from: { opacity: "0", transform: "translateY(24px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -99,6 +122,11 @@ const config: Config = {
         "fade-in": "fade-in 0.5s ease-out",
         shimmer: "shimmer 1.5s infinite",
         "gradient-shift": "gradient-shift 8s ease infinite",
+        marquee: "marquee 30s linear infinite",
+        float: "float 6s ease-in-out infinite",
+        aurora: "aurora 22s ease-in-out infinite",
+        "glow-pulse": "glow-pulse 4s ease-in-out infinite",
+        "reveal-up": "reveal-up 0.6s ease-out both",
       },
       backgroundImage: {
         "grid-pattern":

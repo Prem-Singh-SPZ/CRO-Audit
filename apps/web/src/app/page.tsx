@@ -1,9 +1,11 @@
 import { Navbar } from "@/components/layout/navbar";
 import { Footer } from "@/components/layout/footer";
 import { Hero } from "@/components/landing/hero";
+import { TrustedBy } from "@/components/landing/trusted-by";
 import { Stats } from "@/components/landing/stats";
 import { Features } from "@/components/landing/features";
 import { HowItWorks } from "@/components/landing/how-it-works";
+import { Comparison } from "@/components/landing/comparison";
 import { Benefits } from "@/components/landing/benefits";
 import { Testimonials } from "@/components/landing/testimonials";
 import { AgencyCta } from "@/components/report/agency-cta";
@@ -16,10 +18,12 @@ export default function HomePage() {
       <Navbar />
       <main id="main-content" tabIndex={-1}>
         <Hero />
+        <TrustedBy />
         <HowItWorks />
-        <Stats />
+        <Comparison />
         <Features />
         <Benefits />
+        <Stats />
         <Testimonials />
         <section className="py-24">
           <div className="container">

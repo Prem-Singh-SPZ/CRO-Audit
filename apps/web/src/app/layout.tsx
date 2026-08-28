@@ -53,10 +53,9 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#000F29" },
-  ],
+  // Dark-first: the app defaults to the deep navy theme regardless of OS
+  // preference, so the browser chrome should match.
+  themeColor: "#03070f",
   width: "device-width",
   initialScale: 1,
 };

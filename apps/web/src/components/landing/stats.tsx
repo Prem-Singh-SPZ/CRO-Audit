@@ -1,10 +1,18 @@
 import { Reveal } from "@/components/reveal";
+import { CountUpStat } from "./count-up-stat";
 
 const STATS = [
-  { value: "30%", label: "Avg. conversion lift in the first 90 days" },
-  { value: "78,000", label: "Websites powering our prediction engine" },
-  { value: "170", label: "A/B testing specialists on the team" },
-  { value: "3X", label: "Higher win rate than legacy A/B testing" },
+  {
+    value: 30,
+    suffix: "%",
+    label: "Avg. conversion lift in the first 90 days",
+  },
+  {
+    value: 78000,
+    label: "Websites powering our prediction engine",
+  },
+  { value: 170, label: "A/B testing specialists on the team" },
+  { value: 3, suffix: "X", label: "Higher win rate than legacy A/B testing" },
 ];
 
 export function Stats() {
@@ -23,10 +31,12 @@ export function Stats() {
         <div className="mt-12 grid grid-cols-2 gap-6 lg:grid-cols-4">
           {STATS.map((s, i) => (
             <Reveal key={s.label} delay={i}>
-              <div className="rounded-2xl border bg-card p-6 text-center shadow-sm">
-                <div className="text-3xl font-semibold text-primary sm:text-4xl">
-                  {s.value}
-                </div>
+              <div className="rounded-2xl border bg-card p-6 text-center shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-primary/30 hover:shadow-lg hover:shadow-primary/10">
+                <CountUpStat
+                  value={s.value}
+                  suffix={s.suffix}
+                  className="text-3xl font-semibold text-primary sm:text-4xl"
+                />
                 <p className="mt-2 text-sm text-muted-foreground">{s.label}</p>
               </div>
             </Reveal>

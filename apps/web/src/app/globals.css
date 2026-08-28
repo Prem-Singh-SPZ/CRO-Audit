@@ -50,27 +50,28 @@
   }
 
   .dark {
-    --background: 216 100% 8%;
+    /* Coframe-style near-black navy base with brighter amber/blue accents. */
+    --background: 217 74% 4%;
     --foreground: 0 0% 98%;
 
-    --card: 216 54% 11%;
+    --card: 216 52% 8%;
     --card-foreground: 0 0% 98%;
 
-    --popover: 216 54% 11%;
+    --popover: 216 52% 8%;
     --popover-foreground: 0 0% 98%;
 
-    --primary: 38 95% 58%;
+    --primary: 38 96% 60%;
     --primary-foreground: 216 100% 9%;
 
-    --secondary: 216 40% 16%;
+    --secondary: 216 40% 14%;
     --secondary-foreground: 0 0% 98%;
 
-    --muted: 216 35% 15%;
+    --muted: 216 38% 12%;
     /* Brightened so secondary text stays easily readable on deep navy. */
-    --muted-foreground: 214 32% 88%;
+    --muted-foreground: 214 30% 80%;
 
-    --accent: 216 45% 18%;
-    --accent-foreground: 38 95% 70%;
+    --accent: 216 46% 15%;
+    --accent-foreground: 38 96% 70%;
 
     --destructive: 0 72% 55%;
     --destructive-foreground: 0 0% 98%;
@@ -81,19 +82,22 @@
     --warning: 38 92% 55%;
     --warning-foreground: 216 100% 9%;
 
-    --brand: 224 95% 62%;
+    --brand: 224 96% 66%;
     --brand-foreground: 0 0% 100%;
 
-    --border: 216 40% 18%;
+    --border: 216 42% 15%;
     /* Lighter than the border so fields stand out against the dark card. */
-    --input: 216 38% 30%;
-    --ring: 38 95% 58%;
+    --input: 216 38% 26%;
+    --ring: 38 96% 60%;
   }
 }
 
 @layer base {
   * {
     @apply border-border;
+  }
+  html {
+    scroll-behavior: smooth;
   }
   body {
     @apply bg-background text-foreground antialiased;
@@ -138,10 +142,114 @@
     @apply bg-gradient-to-br from-foreground via-foreground to-foreground/50 bg-clip-text text-transparent;
   }
   .text-gradient-primary {
-    @apply bg-gradient-to-r from-amber-400 via-primary to-orange-400 bg-clip-text text-transparent;
+    @apply bg-gradient-to-r from-amber-300 via-primary to-orange-400 bg-clip-text text-transparent;
+  }
+  .text-gradient-brand {
+    @apply bg-gradient-to-r from-primary via-amber-400 to-brand bg-clip-text text-transparent;
   }
   .card-premium {
-    @apply rounded-2xl border bg-card shadow-sm transition-all duration-300 hover:shadow-md;
+    @apply rounded-2xl border bg-card shadow-sm transition-all duration-300 hover:shadow-md hover:shadow-primary/10 hover:border-primary/30;
+  }
+  /* Soft amber halo used for hero CTAs, gauges, and featured cards. */
+  .glow {
+    box-shadow: 0 0 60px -18px hsl(var(--primary) / 0.55);
+  }
+  .glow-brand {
+    box-shadow: 0 0 60px -18px hsl(var(--brand) / 0.5);
+  }
+  /* Animated aurora backdrop. Sits behind content in a relatively-positioned
+     parent; the moving gradient blobs are drawn via ::before / ::after. */
+  .aurora {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .aurora::before,
+  .aurora::after {
+    content: "";
+    position: absolute;
+    border-radius: 9999px;
+    filter: blur(90px);
+    opacity: 0.5;
+    will-change: transform;
+  }
+  .aurora::before {
+    width: 46rem;
+    height: 46rem;
+    top: -14rem;
+    left: -8rem;
+    background: radial-gradient(
+      circle at center,
+      hsl(var(--primary) / 0.55),
+      transparent 60%
+    );
+    animation: aurora 22s ease-in-out infinite;
+  }
+  .aurora::after {
+    width: 40rem;
+    height: 40rem;
+    right: -10rem;
+    bottom: -16rem;
+    background: radial-gradient(
+      circle at center,
+      hsl(var(--brand) / 0.45),
+      transparent 60%
+    );
+    animation: aurora 26s ease-in-out infinite reverse;
+  }
+  /* Gradient hairline border used on premium surfaces. */
+  .ring-gradient {
+    @apply relative;
+  }
+  .ring-gradient::after {
+    content: "";
+    @apply pointer-events-none absolute inset-0 rounded-[inherit];
+    padding: 1px;
+    background: linear-gradient(
+      130deg,
+      hsl(var(--primary) / 0.6),
+      transparent 40%,
+      hsl(var(--brand) / 0.45)
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+}
+
+/* Keyframes used by the aurora backdrop and floating accents (also mirrored in
+   tailwind.config.ts for utility-class access). */
+@keyframes aurora {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(6%, 8%, 0) scale(1.12);
+  }
+  66% {
+    transform: translate3d(-6%, -4%, 0) scale(0.95);
+  }
+}
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+@keyframes glow-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 40px -18px hsl(var(--primary) / 0.45);
+  }
+  50% {
+    box-shadow: 0 0 70px -12px hsl(var(--primary) / 0.75);
   }
 }
 

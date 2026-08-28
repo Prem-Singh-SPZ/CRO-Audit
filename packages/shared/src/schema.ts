@@ -112,6 +112,32 @@ export type RecommendationInput = z.infer<typeof recommendationSchema>;
 // The full structured AI report
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Email verification (OTP) + report delivery
+// ---------------------------------------------------------------------------
+
+export const otpRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Please enter a valid email"),
+});
+export type OtpRequestInput = z.infer<typeof otpRequestSchema>;
+
+export const otpVerifySchema = z.object({
+  requestId: z.string().uuid(),
+  code: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, "Enter the 6-digit code"),
+});
+export type OtpVerifyInput = z.infer<typeof otpVerifySchema>;
+
+export const emailReportSchema = z.object({
+  token: z.string().min(1),
+  shareUrl: z.string().url(),
+  host: z.string().min(1).max(255),
+  score: z.number().int().min(0).max(100),
+});
+export type EmailReportInput = z.infer<typeof emailReportSchema>;
+
 export const reportSchema = z.object({
   overallScore: z.number().int().min(0).max(100),
   categoryScores: categoryScoresSchema,

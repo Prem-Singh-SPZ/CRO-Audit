@@ -2,6 +2,7 @@ import type {
   SeverityLevel,
   ComplexityLevel,
   DiyRiskLevel,
+  CategoryScores,
 } from "@cro/shared";
 
 // Anchor for the sticky booking panel + a smooth-scroll helper reused by the
@@ -88,3 +89,52 @@ export const PRIORITY_META: Record<
   medium: { label: "Medium priority", className: "bg-warning/15 text-warning" },
   low: { label: "Low priority", className: "bg-success/15 text-success" },
 };
+
+// ---------------------------------------------------------------------------
+// Grouped scorecard — collapses the 12 fine-grained category scores into the
+// three high-level pillars shown on the scan screen and the report summary
+// (mirrors the Coframe-style "Clarity / Design / Conversion" breakdown).
+// ---------------------------------------------------------------------------
+
+export type ScoreGroupKey = "clarity" | "design" | "conversion";
+
+export const SCORE_GROUPS: {
+  key: ScoreGroupKey;
+  label: string;
+  members: (keyof CategoryScores)[];
+}[] = [
+  {
+    key: "clarity",
+    label: "Clarity & Messaging",
+    members: ["hero", "copy", "psychology", "seo"],
+  },
+  {
+    key: "design",
+    label: "Design & Performance",
+    members: ["design", "performance", "accessibility", "mobile"],
+  },
+  {
+    key: "conversion",
+    label: "Conversion & Growth",
+    members: ["cta", "trust", "forms", "navigation"],
+  },
+];
+
+export function gradeFor(score: number): "Good" | "Fair" | "Poor" {
+  if (score >= 70) return "Good";
+  if (score >= 45) return "Fair";
+  return "Poor";
+}
+
+/** Averages the member category scores into the three display pillars. */
+export function groupCategoryScores(
+  scores: CategoryScores
+): { key: ScoreGroupKey; label: string; score: number; grade: string }[] {
+  return SCORE_GROUPS.map((group) => {
+    const values = group.members.map((m) => scores[m] ?? 0);
+    const avg = values.length
+      ? Math.round(values.reduce((a, b) => a + b, 0) / values.length)
+      : 0;
+    return { key: group.key, label: group.label, score: avg, grade: gradeFor(avg) };
+  });
+}
