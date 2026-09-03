@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SCORE_CATEGORIES, SEVERITIES, DEVICES } from "./constants";
+import { isDisposableEmail } from "./disposable-email-domains";
 
 // ---------------------------------------------------------------------------
 // URL input validation
@@ -117,7 +118,14 @@ export type RecommendationInput = z.infer<typeof recommendationSchema>;
 // ---------------------------------------------------------------------------
 
 export const otpRequestSchema = z.object({
-  email: z.string().trim().toLowerCase().email("Please enter a valid email"),
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email("Please enter a valid email")
+    .refine((email) => !isDisposableEmail(email), {
+      message: "Please use a permanent email — disposable inboxes aren't allowed.",
+    }),
 });
 export type OtpRequestInput = z.infer<typeof otpRequestSchema>;
 
