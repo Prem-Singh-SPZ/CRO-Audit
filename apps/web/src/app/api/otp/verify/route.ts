@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { otpVerifySchema } from "@cro/shared";
 import { verifyOtp } from "@/lib/server/otp";
+import { captureLead } from "@/lib/server/leads";
 import { rateLimit, clientKey } from "@/lib/server/rate-limit";
 
 export const runtime = "nodejs";
@@ -28,9 +29,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
+  const raw = body as Record<string, unknown>;
   const parsed = otpVerifySchema.safeParse({
-    requestId: (body as { requestId?: unknown })?.requestId,
-    code: (body as { code?: unknown })?.code,
+    requestId: raw?.requestId,
+    code: raw?.code,
+    host: raw?.host,
+    url: raw?.url,
+    score: raw?.score,
+    device: raw?.device,
   });
   if (!parsed.success) {
     return NextResponse.json(
@@ -64,6 +70,24 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 400 }
     );
   }
+
+  // Best-effort marketing lead capture. Enriches the verified email with the
+  // analyzed page context (from the client) plus geo/IP/UA (from Vercel
+  // headers). Never throws, so it can't affect the verification response.
+  const h = request.headers;
+  const ip = (h.get("x-forwarded-for") ?? "").split(",")[0]?.trim() || undefined;
+  await captureLead({
+    email: result.email,
+    host: parsed.data.host,
+    url: parsed.data.url,
+    score: parsed.data.score,
+    device: parsed.data.device,
+    country: h.get("x-vercel-ip-country") ?? undefined,
+    city: decodeURIComponent(h.get("x-vercel-ip-city") ?? "") || undefined,
+    ip,
+    userAgent: h.get("user-agent") ?? undefined,
+    referer: h.get("referer") ?? undefined,
+  });
 
   return NextResponse.json({ token: result.token, email: result.email });
 }

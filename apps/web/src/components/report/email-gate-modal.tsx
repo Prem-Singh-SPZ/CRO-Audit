@@ -19,11 +19,20 @@ export function EmailGateModal({
   onOpenChange,
   onVerified,
   issueCount,
+  host,
+  url,
+  score,
+  device,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onVerified: (token: string, email: string) => void;
   issueCount: number;
+  // Optional lead-enrichment context sent with verification for marketing.
+  host?: string;
+  url?: string;
+  score?: number;
+  device?: "desktop" | "mobile";
 }) {
   const [step, setStep] = React.useState<"email" | "code">("email");
   const [email, setEmail] = React.useState("");
@@ -70,7 +79,15 @@ export function EmailGateModal({
       const res = await fetch("/api/otp/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requestId, code, email: email.trim() }),
+        body: JSON.stringify({
+          requestId,
+          code,
+          email: email.trim(),
+          host,
+          url,
+          score,
+          device,
+        }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.error ?? "That code isn't right.");

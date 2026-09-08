@@ -65,8 +65,24 @@ export function ReportView({
   // data URIs — only treat the tab as available when we actually have an image.
   const hasScreenshots = screenshots.some((s) => s.url);
 
+  // Primary analyzed device for lead enrichment (desktop preferred).
+  const primaryDevice: "desktop" | "mobile" = screenshots.some(
+    (s) => s.device === "desktop"
+  )
+    ? "desktop"
+    : screenshots.some((s) => s.device === "mobile")
+      ? "mobile"
+      : "desktop";
+
   return (
-    <ReportGateProvider issueCount={issues.length} readOnly={readOnly}>
+    <ReportGateProvider
+      issueCount={issues.length}
+      readOnly={readOnly}
+      host={host}
+      url={scan.url}
+      score={report.overallScore}
+      device={primaryDevice}
+    >
     <div className="min-h-screen pb-24">
       {readOnly ? (
         <ReadOnlyHeader host={host} />

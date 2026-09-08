@@ -135,6 +135,13 @@ export const otpVerifySchema = z.object({
     .string()
     .trim()
     .regex(/^\d{6}$/, "Enter the 6-digit code"),
+  // Optional lead-enrichment context captured for marketing. Each field is
+  // `.catch(undefined)` so malformed enrichment data can NEVER cause a
+  // verification to fail — the critical requestId/code checks are unaffected.
+  host: z.string().max(255).optional().catch(undefined),
+  url: z.string().max(2048).optional().catch(undefined),
+  score: z.number().int().min(0).max(100).optional().catch(undefined),
+  device: z.enum(["desktop", "mobile"]).optional().catch(undefined),
 });
 export type OtpVerifyInput = z.infer<typeof otpVerifySchema>;
 

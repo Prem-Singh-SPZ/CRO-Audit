@@ -3,7 +3,16 @@
 import * as React from "react";
 import Link from "next/link";
 import { upload } from "@vercel/blob/client";
-import { Check, Copy, Download, FileJson, Loader2, Share2, Zap } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Download,
+  FileJson,
+  Loader2,
+  Mail,
+  Share2,
+  Zap,
+} from "lucide-react";
 
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -17,15 +26,22 @@ import {
 } from "@/components/ui/dialog";
 import { scrollToBooking } from "@/lib/report-ui";
 import { stripMockupSeed } from "@/lib/report-store";
+import { uploadReportForShare } from "@/lib/verification";
 import { safeHost } from "@/lib/utils";
 import type { ReportResponse } from "@cro/shared";
+import { useReportGate } from "./report-gate";
 
 export function ReportHeader({ data }: { data: ReportResponse }) {
+  const { verified, token, email, openGate } = useReportGate();
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [sharing, setSharing] = React.useState(false);
   const [shareUrl, setShareUrl] = React.useState<string | null>(null);
   const [shareError, setShareError] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
+  const [emailStatus, setEmailStatus] = React.useState<
+    "idle" | "sending" | "sent"
+  >("idle");
+  const [emailError, setEmailError] = React.useState<string | null>(null);
 
   function downloadJson() {
     const blob = new Blob([JSON.stringify(data, null, 2)], {
@@ -75,6 +91,41 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
       setTimeout(() => setCopied(false), 2000);
     } catch {
       // Clipboard blocked — the input stays selectable for manual copy.
+    }
+  }
+
+  // Send-to-self: emails the report to the address the user verified at the
+  // unlock gate. The server derives the recipient from the token, so this can
+  // never be pointed at an arbitrary address.
+  async function emailReport() {
+    if (!verified || !token) {
+      openGate(); // gate mints the token we need
+      return;
+    }
+    setEmailStatus("sending");
+    setEmailError(null);
+    try {
+      let url = shareUrl;
+      if (!url) {
+        url = await uploadReportForShare(data);
+        setShareUrl(url);
+      }
+      const res = await fetch("/api/report/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token,
+          shareUrl: url,
+          host: safeHost(data.scan.url, "your site"),
+          score: data.report.overallScore,
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? "Couldn't send the email.");
+      setEmailStatus("sent");
+    } catch (err) {
+      setEmailError(err instanceof Error ? err.message : "Something went wrong.");
+      setEmailStatus("idle");
     }
   }
 
@@ -137,7 +188,8 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
             <DialogTitle>Share this report</DialogTitle>
             <DialogDescription>
               Anyone with this link can view the full read-only report — no login
-              required. Links stay active for about 30 days.
+              required. Copy the link or email it to your verified address. Links
+              stay active for about 30 days.
             </DialogDescription>
           </DialogHeader>
 
@@ -177,6 +229,38 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
               </Button>
             </div>
           ) : null}
+
+          {/* Send-to-self: emails the verified address via the OTP-gated
+              endpoint. Recipient is derived from the token server-side. */}
+          <div className="mt-4 border-t pt-4">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={emailReport}
+              disabled={emailStatus === "sending" || emailStatus === "sent"}
+            >
+              {emailStatus === "sending" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : emailStatus === "sent" ? (
+                <Check className="h-4 w-4 text-success" />
+              ) : (
+                <Mail className="h-4 w-4" />
+              )}
+              {emailStatus === "sent"
+                ? email
+                  ? `Sent to ${email}`
+                  : "Report sent"
+                : emailStatus === "sending"
+                  ? "Sending…"
+                  : verified
+                    ? `Email this report to ${email ?? "me"}`
+                    : "Verify your email to send this report"}
+            </Button>
+            {emailError ? (
+              <p className="mt-1 text-xs text-destructive">{emailError}</p>
+            ) : null}
+          </div>
         </DialogContent>
       </Dialog>
     </header>

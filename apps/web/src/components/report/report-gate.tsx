@@ -28,11 +28,20 @@ export function useReportGate(): GateContextValue {
 export function ReportGateProvider({
   issueCount,
   readOnly = false,
+  host,
+  url,
+  score,
+  device,
   children,
 }: {
   issueCount: number;
   // Shared/read-only reports are already "unlocked" — the owner chose to share.
   readOnly?: boolean;
+  // Optional lead-enrichment context forwarded to the verify endpoint.
+  host?: string;
+  url?: string;
+  score?: number;
+  device?: "desktop" | "mobile";
   children: React.ReactNode;
 }) {
   const [modalOpen, setModalOpen] = React.useState(false);
@@ -66,6 +75,10 @@ export function ReportGateProvider({
         open={modalOpen}
         onOpenChange={setModalOpen}
         issueCount={issueCount}
+        host={host}
+        url={url}
+        score={score}
+        device={device}
         onVerified={(t, e) => {
           setToken(t);
           setEmail(e);
