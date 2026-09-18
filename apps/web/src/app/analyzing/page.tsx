@@ -29,29 +29,6 @@ export default function AnalyzingPage() {
 
   function handleComplete(data: ReportResponse) {
     const stored = storeReport(data);
-    // #region agent log
-    fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "9220bc",
-      },
-      body: JSON.stringify({
-        sessionId: "9220bc",
-        runId: "post-fix",
-        hypothesisId: "STALE",
-        location: "analyzing/page.tsx:handleComplete",
-        message: "persist report after analyze",
-        data: {
-          storedOk: stored.ok,
-          degraded: stored.degraded,
-          incompleteCapture: Boolean(data.incompleteCapture),
-          url: data.scan?.url ?? null,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     if (!stored.ok) {
       setError(
         "Your report was generated but is too large to open in this browser. Try a different browser or disable private mode, then run it again."

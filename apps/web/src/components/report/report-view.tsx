@@ -80,32 +80,6 @@ export function ReportView({
   const [selectedIssueId, setSelectedIssueId] = React.useState<string | null>(
     null
   );
-  // #region agent log
-  React.useEffect(() => {
-    fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "9220bc",
-      },
-      body: JSON.stringify({
-        sessionId: "9220bc",
-        runId: "pre-fix",
-        hypothesisId: "E",
-        location: "report-view.tsx:banner",
-        message: "report capture flags",
-        data: {
-          screenshotSource: data.screenshotSource ?? null,
-          incompleteCapture: Boolean(data.incompleteCapture),
-          captureNote: data.captureNote ?? null,
-          showUsableBanner: Boolean(data.incompleteCapture),
-          liveTest: Boolean(data.liveTest),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  }, [data.screenshotSource, data.incompleteCapture, data.captureNote, data.liveTest]);
-  // #endregion
 
   return (
     <ReportGateProvider

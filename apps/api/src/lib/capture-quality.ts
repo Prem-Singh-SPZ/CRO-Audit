@@ -974,45 +974,6 @@ export function pageIsCaptureReady(): boolean {
   return true;
 }
 
-/** First fail reason for the ready gate — debug probe, self-contained. */
-export function pageCaptureReadyReason(): string {
-  if (document.readyState !== "complete") return "readyState";
-  const vw = window.innerWidth || 1440;
-  const vh = window.innerHeight || 900;
-  for (const el of Array.from(
-    document.querySelectorAll(
-      "[aria-busy], [class*='loading' i], [class*='spinner' i], [class*='skeleton' i]"
-    )
-  )) {
-    if (!(el instanceof HTMLElement)) continue;
-    const st = getComputedStyle(el);
-    if (st.display === "none" || st.visibility === "hidden" || Number(st.opacity) === 0) {
-      continue;
-    }
-    const r = el.getBoundingClientRect();
-    if (r.width < 80 || r.height < 80) continue;
-    if (r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw) continue;
-    if (el.getAttribute("aria-busy") === "true") return "aria-busy";
-    const t = (el.textContent || "").replace(/\s+/g, " ").trim();
-    if (/^(loading|loading…|loading\.\.\.|please wait|just a moment)$/i.test(t)) {
-      return "loading-text";
-    }
-    if (/\b(loading|spinner|skeleton)\b/i.test(el.className)) return "spinner-class";
-  }
-  for (const img of Array.from(document.images)) {
-    const r = img.getBoundingClientRect();
-    if (r.width < 40 || r.height < 20) continue;
-    if (r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw) continue;
-    const src = (img.currentSrc || img.src || "").toLowerCase();
-    const svg =
-      img.complete &&
-      (/\.svg(\?|#|$)/.test(src) || src.startsWith("data:image/svg"));
-    if ((img.complete && img.naturalWidth > 20) || svg) continue;
-    return "incomplete-img";
-  }
-  return "other-or-blank-or-form";
-}
-
 /** Live shot is not usable when most laid-out <img> nodes never decoded. */
 export function imagesTooIncomplete(inv: {
   totalImgs: number;
@@ -1087,18 +1048,12 @@ export function inlineZeroNaturalSvgImages(): Promise<number> {
 }
 
 /** Keep the full-page JPEG at the 1440 desktop width. */
-export function lockDesktopShotWidth(width: number): { scrollW: number } {
+export function lockDesktopShotWidth(width: number): void {
   const w = `${width}px`;
   document.documentElement.style.maxWidth = w;
   document.documentElement.style.overflowX = "hidden";
   document.body.style.maxWidth = w;
   document.body.style.overflowX = "hidden";
-  return {
-    scrollW: Math.max(
-      document.documentElement.scrollWidth,
-      document.body?.scrollWidth ?? 0
-    ),
-  };
 }
 
 /** Count decoded vs still-pending images after the control settle. */
@@ -1107,24 +1062,10 @@ export function collectImageLoadInventory(): {
   complete: number;
   visibleImgs: number;
   visibleComplete: number;
-  pending: Array<{
-    kind: string;
-    natural: number;
-    w: number;
-    h: number;
-    complete: boolean;
-  }>;
 } {
   let complete = 0;
   let visibleImgs = 0;
   let visibleComplete = 0;
-  const pending: Array<{
-    kind: string;
-    natural: number;
-    w: number;
-    h: number;
-    complete: boolean;
-  }> = [];
   for (const img of Array.from(document.images)) {
     const src = (img.currentSrc || img.src || "").toLowerCase();
     const svgLogo =
@@ -1138,29 +1079,12 @@ export function collectImageLoadInventory(): {
       visibleImgs += 1;
       if (decoded) visibleComplete += 1;
     }
-    if (!decoded && pending.length < 8) {
-      const kind = !src
-        ? "empty"
-        : src.startsWith("data:")
-          ? "data"
-          : src.includes(".svg")
-            ? "svg"
-            : "http";
-      pending.push({
-        kind,
-        natural: img.naturalWidth,
-        w: Math.round(r.width),
-        h: Math.round(r.height),
-        complete: img.complete,
-      });
-    }
   }
   return {
     totalImgs: document.images.length,
     complete,
     visibleImgs,
     visibleComplete,
-    pending,
   };
 }
 

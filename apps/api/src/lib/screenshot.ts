@@ -595,30 +595,6 @@ async function captureScreenshotsOnce(
       })
     ) {
       const hit = await archiveLookup;
-      // #region agent log
-      fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "9220bc",
-        },
-        body: JSON.stringify({
-          sessionId: "9220bc",
-          runId: "pre-fix",
-          hypothesisId: hit ? "D" : "C",
-          location: "screenshot.ts:archiveLookup",
-          message: "live unusable — archive fallback",
-          data: {
-            liveUsable,
-            incompleteCapture,
-            blockedReason,
-            hasHit: Boolean(hit),
-            hitTs: hit?.timestamp ?? null,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       if (hit) {
         const archive = await captureArchivePage(page, hit, desktopUa);
         if (archive) {
@@ -867,25 +843,7 @@ async function walkUntilPageSettled(
 async function captureControlFullPage(
   page: Page
 ): Promise<{ shot: Screenshot | null; ready: boolean }> {
-  const extent = await walkUntilPageSettled(page);
-  // #region agent log
-  fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "9220bc",
-    },
-    body: JSON.stringify({
-      sessionId: "9220bc",
-      runId: "post-fix",
-      hypothesisId: "WALK",
-      location: "screenshot.ts:afterWalk",
-      message: "page extent after lazy walk",
-      data: { width: extent.width, height: extent.height },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
+  await walkUntilPageSettled(page);
   const hidden = await raceTimeout(
     page.evaluate(hideConsentOverlaysInPage),
     PAGE_OP_TIMEOUT_MS,
@@ -910,61 +868,7 @@ async function captureControlFullPage(
     PAGE_OP_TIMEOUT_MS,
     null
   );
-  const gateReason = await raceTimeout(
-    page.evaluate(pageCaptureReadyReason),
-    PAGE_OP_TIMEOUT_MS,
-    "timeout"
-  );
   const undecode = imagesTooIncomplete(afterSettle);
-  // #region agent log
-  fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "9220bc",
-    },
-    body: JSON.stringify({
-      sessionId: "9220bc",
-      runId: "post-fix",
-      hypothesisId: "IMG",
-      location: "screenshot.ts:pendingImgs",
-      message: "undecoded image sample",
-      data: {
-        pending: afterSettle && "pending" in afterSettle ? afterSettle.pending : null,
-        visibleImgs: afterSettle?.visibleImgs ?? null,
-        totalImgs: afterSettle?.totalImgs ?? null,
-        complete: afterSettle?.complete ?? null,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
-  // #region agent log
-  fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "9220bc",
-    },
-    body: JSON.stringify({
-      sessionId: "9220bc",
-      runId: "pre-fix",
-      hypothesisId: undecode ? "A" : gateReady ? "E" : "B",
-      location: "screenshot.ts:captureControlFullPage",
-      message: "control ready after 5s settle",
-      data: {
-        engine: "puppeteer-core+chromium",
-        gateReady,
-        gateReason,
-        undecode,
-        ready: undecode ? false : gateReady,
-        complete: afterSettle?.complete ?? null,
-        totalImgs: afterSettle?.totalImgs ?? null,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
   await raceTimeout(
     page.evaluate(() =>
       window.scrollTo(0, document.documentElement.scrollHeight)
@@ -972,7 +876,7 @@ async function captureControlFullPage(
     PAGE_OP_TIMEOUT_MS,
     undefined
   );
-  const inlined = await raceTimeout(
+  await raceTimeout(
     page.evaluate(inlineZeroNaturalSvgImages),
     PAGE_OP_TIMEOUT_MS,
     0
@@ -982,81 +886,17 @@ async function captureControlFullPage(
     PAGE_OP_TIMEOUT_MS,
     undefined
   );
-  // #region agent log
-  fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "9220bc",
-    },
-    body: JSON.stringify({
-      sessionId: "9220bc",
-      runId: "post-fix",
-      hypothesisId: "SVG",
-      location: "screenshot.ts:inlineSvg",
-      message: "inlined zero-naturalWidth SVG imgs",
-      data: { inlined },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
-  const locked = await raceTimeout(
+  await raceTimeout(
     page.evaluate(lockDesktopShotWidth, VIEWPORT.width),
     PAGE_OP_TIMEOUT_MS,
-    { scrollW: -1 }
+    undefined
   );
-  // #region agent log
-  fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "9220bc",
-    },
-    body: JSON.stringify({
-      sessionId: "9220bc",
-      runId: "post-fix",
-      hypothesisId: "WIDE",
-      location: "screenshot.ts:lockWidth",
-      message: "locked desktop width before jpeg",
-      data: locked,
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
   const shot = await captureNativeFullPageJpeg(page);
   let ready = !undecode && gateReady;
   // A real desktop JPEG is enough. The style/blank probe false-fails short
   // pages (example.com) and sparse heroes; only fail when visible images
   // never decoded.
   if (!ready && !undecode && shot) ready = true;
-  // #region agent log
-  fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "9220bc",
-    },
-    body: JSON.stringify({
-      sessionId: "9220bc",
-      runId: "post-fix",
-      hypothesisId: "A",
-      location: "screenshot.ts:readyFinal",
-      message: "final control usable flag",
-      data: {
-        gateReady,
-        undecode,
-        ready,
-        shotH: shot?.height ?? null,
-        shotW: shot?.width ?? null,
-        visibleImgs: afterSettle?.visibleImgs ?? null,
-        visibleComplete: afterSettle?.visibleComplete ?? null,
-        totalImgs: afterSettle?.totalImgs ?? null,
-        complete: afterSettle?.complete ?? null,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
   return { shot, ready };
 }
 
@@ -1086,24 +926,6 @@ async function captureArchivePage(
     );
     const gate = await prepareViewportForShot(page);
     if (!gate.ready) {
-      // #region agent log
-      fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "9220bc",
-        },
-        body: JSON.stringify({
-          sessionId: "9220bc",
-          runId: "pre-fix",
-          hypothesisId: "D",
-          location: "screenshot.ts:archiveGate",
-          message: "archive snapshot failed ready gate",
-          data: { timestamp: hit.timestamp ?? null },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       console.warn(
         `[screenshot] archive snapshot ${hit.timestamp} failed the ready gate — keeping live`
       );

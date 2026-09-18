@@ -47,32 +47,7 @@ export default function ReportPage() {
   React.useEffect(() => {
     try {
       const raw = sessionStorage.getItem(REPORT_STORAGE_KEY);
-      if (raw) {
-        const parsed = normalizeReport(JSON.parse(raw) as ReportResponse);
-        // #region agent log
-        fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "9220bc",
-          },
-          body: JSON.stringify({
-            sessionId: "9220bc",
-            runId: "post-fix",
-            hypothesisId: "STALE",
-            location: "report/page.tsx:hydrate",
-            message: "report hydrated from sessionStorage",
-            data: {
-              url: parsed.scan?.url ?? null,
-              incompleteCapture: Boolean(parsed.incompleteCapture),
-              bytes: raw.length,
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
-        setData(parsed);
-      }
+      if (raw) setData(normalizeReport(JSON.parse(raw) as ReportResponse));
     } catch {
       // Corrupt/missing payload — fall through to the empty state.
     }
