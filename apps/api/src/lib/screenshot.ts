@@ -16,11 +16,13 @@ import {
   isLiveCaptureUsable,
   layoutSnapshotsEqual,
   collectImageLoadInventory,
+  countVisibleLeadFields,
+  hideKnownConsentSdkInPage,
   imagesTooIncomplete,
   inlineZeroNaturalSvgImages,
-  lockDesktopShotWidth,
   pageIsCaptureReady,
   shouldRetryCapture,
+  shouldSkipConsentClick,
 } from "./capture-quality";
 import { jpegDimensions } from "./jpeg-size";
 import { inspectAndHideLiveTestInPage } from "./live-test";
@@ -95,6 +97,8 @@ const DESKTOP_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 
 const VIEWPORT = { width: 1440, height: 900, deviceScaleFactor: 1 } as const;
+/** Tall viewport can OOM Cloud Run; clip the first N px instead. */
+const CLIP_HEIGHT_CAP = 16_000;
 const BAND_HEIGHT = VIEWPORT.height;
 const BAND_OVERLAP = 80;
 const BAND_STEP = BAND_HEIGHT - BAND_OVERLAP;
@@ -187,6 +191,16 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** Scroll tops for viewport bands that tile the stitch with a small overlap. */
+/** Clamp a measured document height for a single-screen clip capture. */
+export function clampShotHeight(
+  raw: number,
+  cap = CLIP_HEIGHT_CAP
+): number {
+  const h = Math.floor(raw);
+  if (!Number.isFinite(h) || h < 1) return VIEWPORT.height;
+  return Math.min(h, cap);
+}
+
 export function bandScrollTops(captureHeight: number): number[] {
   if (captureHeight <= BAND_HEIGHT) return [0];
   const tops: number[] = [];
@@ -231,6 +245,7 @@ const LOCAL_CHROME_ARGS = [
   "--no-sandbox",
   "--disable-setuid-sandbox",
   "--disable-dev-shm-usage",
+  "--disable-gpu",
 ];
 
 /**
@@ -410,20 +425,35 @@ async function captureScreenshotsOnce(
       .catch(() => {});
 
     await waitOutAutoChallenge(page);
-    // Consent first — always, even when the form already has fields. Fastly
-    // OneTrust ("Accept default settings") otherwise stays on the desktop shot.
-    dismissedConsent = await raceTimeout(
-      page.evaluate(dismissConsentInPage),
-      PAGE_OP_TIMEOUT_MS,
-      false
-    );
-    if (dismissedConsent) await sleep(400);
-    const hiddenOverlays = await raceTimeout(
-      page.evaluate(hideConsentOverlaysInPage),
+    const leadFieldsBeforeConsent = await raceTimeout(
+      page.evaluate(countVisibleLeadFields),
       PAGE_OP_TIMEOUT_MS,
       0
     );
-    if (hiddenOverlays > 0) dismissedConsent = true;
+    const skipConsentClick = shouldSkipConsentClick(leadFieldsBeforeConsent);
+    // Clicking OneTrust Accept remounts Fastly's form (6 fields → 2, stable).
+    // If the lead form already painted, only hide the banner SDK — do not click.
+    if (skipConsentClick) {
+      const hiddenSdk = await raceTimeout(
+        page.evaluate(hideKnownConsentSdkInPage),
+        PAGE_OP_TIMEOUT_MS,
+        0
+      );
+      if (hiddenSdk > 0) dismissedConsent = true;
+    } else {
+      dismissedConsent = await raceTimeout(
+        page.evaluate(dismissConsentInPage),
+        PAGE_OP_TIMEOUT_MS,
+        false
+      );
+      if (dismissedConsent) await sleep(400);
+      const hiddenOverlays = await raceTimeout(
+        page.evaluate(hideConsentOverlaysInPage),
+        PAGE_OP_TIMEOUT_MS,
+        0
+      );
+      if (hiddenOverlays > 0) dismissedConsent = true;
+    }
     await unregisterServiceWorkers(page);
 
     // Detect bot walls from the rendered page before trusting the screenshot.
@@ -695,21 +725,35 @@ async function prepareViewportForShot(
   await page
     .waitForNetworkIdle({ idleTime: 800, timeout: 8000 })
     .catch(() => {});
-  const clicked = await raceTimeout(
-    page.evaluate(dismissConsentInPage),
-    PAGE_OP_TIMEOUT_MS,
-    false
-  );
-  if (clicked) {
-    dismissedConsent = true;
-    await sleep(350);
-  }
-  const hidden = await raceTimeout(
-    page.evaluate(hideConsentOverlaysInPage),
+  const fieldsBefore = await raceTimeout(
+    page.evaluate(countVisibleLeadFields),
     PAGE_OP_TIMEOUT_MS,
     0
   );
-  if (hidden > 0) dismissedConsent = true;
+  if (shouldSkipConsentClick(fieldsBefore)) {
+    const hiddenSdk = await raceTimeout(
+      page.evaluate(hideKnownConsentSdkInPage),
+      PAGE_OP_TIMEOUT_MS,
+      0
+    );
+    if (hiddenSdk > 0) dismissedConsent = true;
+  } else {
+    const clicked = await raceTimeout(
+      page.evaluate(dismissConsentInPage),
+      PAGE_OP_TIMEOUT_MS,
+      false
+    );
+    if (clicked) {
+      dismissedConsent = true;
+      await sleep(350);
+    }
+    const hidden = await raceTimeout(
+      page.evaluate(hideConsentOverlaysInPage),
+      PAGE_OP_TIMEOUT_MS,
+      0
+    );
+    if (hidden > 0) dismissedConsent = true;
+  }
   await waitForFonts(page);
   let ready = false;
   try {
@@ -770,6 +814,63 @@ async function captureViewportJpeg(page: Page): Promise<Screenshot | null> {
   };
 }
 
+/**
+ * Proof-style control shot: grow the viewport to the document height so
+ * Chromium paints one screen, then clip that box. Do not use fullPage.
+ */
+async function captureClippedDocumentJpeg(page: Page): Promise<Screenshot | null> {
+  const extent = await raceTimeout(
+    page.evaluate(measurePageExtent),
+    PAGE_OP_TIMEOUT_MS,
+    { width: VIEWPORT.width, height: VIEWPORT.height }
+  );
+  const height = clampShotHeight(extent.height);
+  try {
+    await raceTimeout(
+      page.setViewport({
+        width: VIEWPORT.width,
+        height,
+        deviceScaleFactor: 1,
+      }),
+      PAGE_OP_TIMEOUT_MS,
+      undefined
+    );
+    await waitUntilLayoutStable(page);
+    const raw = await raceTimeout<Buffer | Uint8Array | null>(
+      page.screenshot({
+        type: "jpeg",
+        quality: 75,
+        clip: { x: 0, y: 0, width: VIEWPORT.width, height },
+      }),
+      FULL_PAGE_TIMEOUT_MS,
+      null
+    );
+    if (!raw) return null;
+    const buf = Buffer.from(raw);
+    const base64 = buf.toString("base64");
+    const dims = jpegDimensions(buf) ?? {
+      width: VIEWPORT.width,
+      height,
+    };
+    return {
+      device: "desktop",
+      base64,
+      mimeType: "image/jpeg",
+      dataUri: `data:image/jpeg;base64,${base64}`,
+      width: dims.width,
+      height: dims.height,
+    };
+  } catch (err) {
+    console.warn(
+      "[screenshot] clipped document capture failed:",
+      (err as Error)?.message ?? err
+    );
+    return null;
+  } finally {
+    await raceTimeout(page.setViewport(VIEWPORT), PAGE_OP_TIMEOUT_MS, undefined);
+  }
+}
+
 /** DevTools "Capture full size screenshot" — do not resize the 1440 viewport. */
 async function captureNativeFullPageJpeg(page: Page): Promise<Screenshot | null> {
   let cdp: Awaited<ReturnType<Page["createCDPSession"]>> | null = null;
@@ -815,6 +916,30 @@ async function captureNativeFullPageJpeg(page: Page): Promise<Screenshot | null>
   }
 }
 
+/** Puppeteer fullPage fallback when CDP clips the document short. */
+async function capturePuppeteerFullPageJpeg(page: Page): Promise<Screenshot | null> {
+  const raw = await raceTimeout<Buffer | Uint8Array | null>(
+    page.screenshot({ type: "jpeg", quality: 75, fullPage: true }),
+    FULL_PAGE_TIMEOUT_MS,
+    null
+  );
+  if (!raw) return null;
+  const buf = Buffer.from(raw);
+  const base64 = buf.toString("base64");
+  const dims = jpegDimensions(buf) ?? {
+    width: VIEWPORT.width,
+    height: VIEWPORT.height,
+  };
+  return {
+    device: "desktop",
+    base64,
+    mimeType: "image/jpeg",
+    dataUri: `data:image/jpeg;base64,${base64}`,
+    width: dims.width,
+    height: dims.height,
+  };
+}
+
 async function walkUntilPageSettled(
   page: Page
 ): Promise<{ width: number; height: number }> {
@@ -845,7 +970,7 @@ async function captureControlFullPage(
 ): Promise<{ shot: Screenshot | null; ready: boolean }> {
   await walkUntilPageSettled(page);
   const hidden = await raceTimeout(
-    page.evaluate(hideConsentOverlaysInPage),
+    page.evaluate(hideKnownConsentSdkInPage),
     PAGE_OP_TIMEOUT_MS,
     0
   );
@@ -886,12 +1011,10 @@ async function captureControlFullPage(
     PAGE_OP_TIMEOUT_MS,
     undefined
   );
-  await raceTimeout(
-    page.evaluate(lockDesktopShotWidth, VIEWPORT.width),
-    PAGE_OP_TIMEOUT_MS,
-    undefined
-  );
-  const shot = await captureNativeFullPageJpeg(page);
+  await waitUntilLayoutStable(page);
+  let shot = await captureClippedDocumentJpeg(page);
+  if (!shot) shot = await captureNativeFullPageJpeg(page);
+  if (!shot) shot = await capturePuppeteerFullPageJpeg(page);
   let ready = !undecode && gateReady;
   // A real desktop JPEG is enough. The style/blank probe false-fails short
   // pages (example.com) and sparse heroes; only fail when visible images

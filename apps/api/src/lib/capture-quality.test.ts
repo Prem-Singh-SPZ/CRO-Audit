@@ -9,6 +9,7 @@ import {
   formFieldsLookStyled,
   hasVisibleLoadingChrome,
   authorCssApplied,
+  shouldSkipConsentClick,
   inViewImagesReady,
   inViewMediaReady,
   layoutSnapshotsEqual,
@@ -319,6 +320,18 @@ describe("isNearWhiteLuma", () => {
       { r: 37, g: 99, b: 235 },
     ];
     expect(isNearWhiteLuma(mixed)).toBe(false);
+  });
+});
+
+describe("shouldSkipConsentClick", () => {
+  it("skips Accept when the lead form already has fields", () => {
+    expect(shouldSkipConsentClick(6)).toBe(true);
+    expect(shouldSkipConsentClick(3)).toBe(true);
+  });
+
+  it("still clicks CMP when no form has painted yet", () => {
+    expect(shouldSkipConsentClick(2)).toBe(false);
+    expect(shouldSkipConsentClick(0)).toBe(false);
   });
 });
 

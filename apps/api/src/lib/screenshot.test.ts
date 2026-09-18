@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { jpegDimensions } from "./jpeg-size";
+import { clampShotHeight } from "./screenshot";
 
 /** Minimal SOF0 JPEG: 1440×2400. */
 function fakeJpeg(width: number, height: number): Buffer {
@@ -13,6 +14,26 @@ function fakeJpeg(width: number, height: number): Buffer {
   ]);
   return sof;
 }
+
+describe("clampShotHeight", () => {
+  it("keeps a normal document height", () => {
+    expect(clampShotHeight(3200)).toBe(3200);
+  });
+
+  it("clamps to the default 16000 cap", () => {
+    expect(clampShotHeight(24_000)).toBe(16_000);
+  });
+
+  it("falls back to the 900 fold when the measure is invalid", () => {
+    expect(clampShotHeight(0)).toBe(900);
+    expect(clampShotHeight(-10)).toBe(900);
+    expect(clampShotHeight(Number.NaN)).toBe(900);
+  });
+
+  it("honors an explicit cap", () => {
+    expect(clampShotHeight(5000, 2000)).toBe(2000);
+  });
+});
 
 describe("jpegDimensions", () => {
   it("reads SOF0 width and height", () => {

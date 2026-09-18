@@ -408,8 +408,10 @@ export function dismissConsentInPage(): boolean {
     );
   };
 
+  const inLeadForm = (el: Element): boolean => Boolean(el.closest("form"));
+
   const known = document.querySelector("#onetrust-accept-btn-handler");
-  if (known instanceof HTMLElement) {
+  if (known instanceof HTMLElement && !inLeadForm(known)) {
     known.click();
     return true;
   }
@@ -425,6 +427,8 @@ export function dismissConsentInPage(): boolean {
     if (!/cookie|consent|onetrust|gdpr|privacy/.test(idc) && role !== "dialog") {
       continue;
     }
+    // Never treat the lead form card as a CMP overlay (Privacy Policy copy).
+    if (el.querySelector("form, input[type=email], textarea")) continue;
     const r = el.getBoundingClientRect();
     const w = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
     const h = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
@@ -439,6 +443,7 @@ export function dismissConsentInPage(): boolean {
     const controls = overlay.querySelectorAll("button, a, [role=button]");
     for (const raw of Array.from(controls)) {
       if (!(raw instanceof HTMLElement)) continue;
+      if (inLeadForm(raw)) continue;
       if (isAccept(raw.textContent || "")) {
         raw.click();
         return true;
@@ -455,6 +460,7 @@ export function dismissConsentInPage(): boolean {
       root.querySelectorAll("button, a, [role=button]")
     )) {
       if (!(raw instanceof HTMLElement)) continue;
+      if (inLeadForm(raw)) continue;
       if (isAccept(raw.textContent || "")) {
         raw.click();
         return true;
@@ -463,11 +469,13 @@ export function dismissConsentInPage(): boolean {
   }
 
   // Fastly-style modal: accept copy is unique, but the wrapper may not
-  // mention onetrust/cookie in id/class.
+  // mention onetrust/cookie in id/class. Never click inside the lead <form>
+  // — "I agree" / "Accept" next to Privacy Policy is not CMP.
   for (const raw of Array.from(
     document.querySelectorAll("button, a, [role=button]")
   )) {
     if (!(raw instanceof HTMLElement)) continue;
+    if (inLeadForm(raw)) continue;
     if (!isAccept(raw.textContent || "")) continue;
     const scope = raw.closest("div, section, aside, dialog, [role=dialog]");
     const ctx = (scope?.textContent || "").slice(0, 400).toLowerCase();
@@ -1054,6 +1062,63 @@ export function lockDesktopShotWidth(width: number): void {
   document.documentElement.style.overflowX = "hidden";
   document.body.style.maxWidth = w;
   document.body.style.overflowX = "hidden";
+}
+
+/** Hide OneTrust banner/PC only — no Accept click, no heuristic overlay scan. */
+export function hideKnownConsentSdkInPage(): number {
+  let hidden = 0;
+  for (const el of Array.from(
+    document.querySelectorAll(
+      "#onetrust-banner-sdk, #onetrust-pc-sdk, .onetrust-pc-dark-filter, #onetrust-pc-dark-filter"
+    )
+  )) {
+    if (!(el instanceof HTMLElement)) continue;
+    el.style.setProperty("display", "none", "important");
+    el.style.setProperty("visibility", "hidden", "important");
+    el.setAttribute("aria-hidden", "true");
+    hidden += 1;
+  }
+  return hidden;
+}
+
+/** A painted lead form is safer to keep than clicking Accept (Fastly remount). */
+export function shouldSkipConsentClick(visibleLeadFields: number): boolean {
+  return visibleLeadFields >= 3;
+}
+
+/** Visible lead inputs. Self-contained for page.evaluate. */
+export function countVisibleLeadFields(): number {
+  let n = 0;
+  for (const el of Array.from(
+    document.querySelectorAll("input, textarea, select")
+  )) {
+    if (!(el instanceof HTMLElement)) continue;
+    if (el instanceof HTMLInputElement) {
+      const t = el.type.toLowerCase();
+      if (
+        t === "hidden" ||
+        t === "submit" ||
+        t === "button" ||
+        t === "image" ||
+        t === "checkbox" ||
+        t === "radio" ||
+        t === "file"
+      ) {
+        continue;
+      }
+    }
+    const st = getComputedStyle(el);
+    if (
+      st.display === "none" ||
+      st.visibility === "hidden" ||
+      Number(st.opacity) === 0
+    ) {
+      continue;
+    }
+    const r = el.getBoundingClientRect();
+    if (r.width >= 32 && r.height >= 14) n += 1;
+  }
+  return n;
 }
 
 /** Count decoded vs still-pending images after the control settle. */
