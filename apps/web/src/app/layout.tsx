@@ -26,7 +26,7 @@ export const metadata: Metadata = {
     template: `%s | ${brand}`,
   },
   description:
-    `Get a complete Conversion Rate Optimization audit in under 60 seconds. Screenshots, Lighthouse, and expert CRO analysis with a prioritized action plan — from ${brand}, the predictive CRO agency.`,
+    `Get a complete Conversion Rate Optimization audit in a few minutes. Screenshots, Lighthouse, and expert CRO analysis with a prioritized action plan — from ${brand}, the predictive CRO agency.`,
   keywords: [
     "CRO",
     "conversion rate optimization",
@@ -39,7 +39,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: siteTitle,
     description:
-      "Complete CRO audit in under 60 seconds. Find out why your website isn't converting.",
+      "Complete CRO audit in a few minutes. Find out why your website isn't converting.",
     url: appUrl,
     siteName: brand,
     type: "website",
@@ -47,7 +47,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: siteTitle,
-    description: "Complete CRO audit in under 60 seconds.",
+    description: "Complete CRO audit in a few minutes.",
   },
   robots: { index: true, follow: true },
 };
@@ -55,7 +55,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   // Dark-first: the app defaults to the deep navy theme regardless of OS
   // preference, so the browser chrome should match.
-  themeColor: "#03070f",
+  themeColor: "#0b1730",
   width: "device-width",
   initialScale: 1,
 };
@@ -66,8 +66,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className={`${montserrat.variable} ${inter.variable} font-sans`}>
+    <html lang="en" className="overflow-x-clip" suppressHydrationWarning>
+      <body
+        className={`${montserrat.variable} ${inter.variable} overflow-x-clip font-sans`}
+      >
         <a
           href="#main-content"
           className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-lg focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-primary-foreground focus:shadow-lg"

@@ -14,7 +14,8 @@ import type { ReportResponse } from "@cro/shared";
 const ENABLED = process.env.ENABLE_RESULT_CACHE === "true";
 const TTL_MS = Math.max(
   0,
-  Number.parseInt(process.env.RESULT_CACHE_TTL_MS ?? "600000", 10) || 600_000
+  Number.parseInt(process.env.RESULT_CACHE_TTL_MS ?? "86400000", 10) ||
+    86_400_000
 );
 const MAX_ENTRIES = Math.max(
   1,

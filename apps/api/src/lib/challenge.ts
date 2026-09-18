@@ -7,6 +7,8 @@
 const MARKERS: { pattern: RegExp; reason: string }[] = [
   { pattern: /just a moment/i, reason: "Cloudflare challenge" },
   { pattern: /checking your browser/i, reason: "Cloudflare challenge" },
+  { pattern: /verify you are (a )?human/i, reason: "CAPTCHA" },
+  { pattern: /cf-turnstile|cloudflare turnstile/i, reason: "CAPTCHA" },
   { pattern: /attention required/i, reason: "Cloudflare block" },
   { pattern: /performing security verification/i, reason: "Security verification" },
   {
@@ -56,4 +58,11 @@ export function detectChallenge(text: string): string | null {
     if (pattern.test(text)) return reason;
   }
   return null;
+}
+
+/** JS challenges that often clear on their own — safe to wait out, never click. */
+const AUTO_CLEARING = new Set(["Cloudflare challenge"]);
+
+export function isAutoClearingChallenge(reason: string | null): boolean {
+  return !!reason && AUTO_CLEARING.has(reason);
 }

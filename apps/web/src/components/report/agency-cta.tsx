@@ -51,7 +51,7 @@ export function AgencyCta({
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-80px" }}
       transition={{ duration: 0.5 }}
-      className="relative overflow-hidden rounded-3xl border border-primary/20 bg-gradient-to-br from-primary/10 via-card to-brand/10 p-8 shadow-xl shadow-primary/5 sm:p-12"
+      className="relative overflow-hidden rounded-3xl border border-primary/20 bg-gradient-to-br from-primary/10 via-card to-brand/10 p-5 shadow-xl shadow-primary/5 sm:p-12"
     >
       <div className="pointer-events-none absolute inset-0 -z-10 bg-grid-pattern bg-[size:32px_32px] opacity-[0.1] [mask-image:radial-gradient(ellipse_at_center,black_30%,transparent_75%)]" />
       {/* Glow accents */}
@@ -92,19 +92,21 @@ export function AgencyCta({
         )}
 
         {/* Social proof stats */}
-        <div className="mt-8 grid grid-cols-3 gap-3">
+        <div className="mt-8 grid grid-cols-3 gap-2 sm:gap-3">
           {STATS.map((s) => (
             <div
               key={s.label}
-              className="rounded-2xl border bg-background/50 p-4 backdrop-blur"
+              className="rounded-2xl border bg-background/50 p-2.5 backdrop-blur sm:p-4"
             >
-              <div className="flex items-center justify-center gap-1 text-xl font-semibold text-foreground sm:text-2xl">
+              <div className="flex items-center justify-center gap-1 text-lg font-semibold text-foreground sm:text-2xl">
                 {s.value === "+30%" ? (
-                  <TrendingUp className="h-4 w-4 text-success" />
+                  <TrendingUp className="hidden h-4 w-4 text-success sm:inline" />
                 ) : null}
                 {s.value}
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">{s.label}</p>
+              <p className="mt-1 text-[10px] leading-tight text-muted-foreground sm:text-xs">
+                {s.label}
+              </p>
             </div>
           ))}
         </div>
@@ -113,7 +115,7 @@ export function AgencyCta({
           <Button asChild variant="gradient" size="xl" className="w-full sm:w-auto">
             <Link href={config.bookCallUrl} target="_blank">
               <Sparkles className="h-4 w-4" />
-              {hasScore ? "Book my strategy session" : "Get a demo"}
+              Fix My Page
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>

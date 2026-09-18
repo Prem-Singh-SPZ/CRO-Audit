@@ -31,6 +31,10 @@ export interface LeadRecord {
   consentText?: string;
   /** Where the lead was captured. */
   source?: string;
+  /** Primary conversion bottleneck from the audit (Sheet column when added). */
+  primaryBottleneck?: string;
+  /** Title of the top issue (Sheet column when added). */
+  topIssueTitle?: string;
 }
 
 // The exact opt-in copy shown in the email gate modal — stored with each lead.

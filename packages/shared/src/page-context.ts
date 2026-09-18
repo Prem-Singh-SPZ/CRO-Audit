@@ -81,6 +81,44 @@ export interface PageContext {
    * screenshot over the sparse crawled DOM and avoid false "missing X" issues.
    */
   clientRendered?: boolean;
+  /**
+   * True when we captured a real page but a late region (usually the hero
+   * form) never painted. Not a hard block — the audit still runs.
+   */
+  incompleteCapture?: boolean;
+  captureNote?: string | null;
+  /**
+   * Detected third-party A/B test runner (Spiralyze, Optimizely, VWO, …).
+   * The capture is the rendered variant, not a guaranteed control.
+   */
+  liveTest?: LiveTestInfo | null;
+}
+
+export interface LiveTestInfo {
+  vendor: string;
+}
+
+export const LANDMARK_IDS = [
+  "h1",
+  "cta",
+  "form",
+  "nav",
+  "footer",
+  "hero",
+  "testimonials",
+  "pricing",
+] as const;
+export type LandmarkId = (typeof LANDMARK_IDS)[number];
+
+/** Measured 0–1 box on the desktop stitch. x/y are centers (same as annotations). */
+export interface LandmarkBox {
+  id: LandmarkId;
+  label: string;
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface LighthouseSummary {

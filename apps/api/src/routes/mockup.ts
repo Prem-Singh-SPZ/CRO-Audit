@@ -3,10 +3,11 @@ import { randomUUID } from "node:crypto";
 
 import type {
   MockupDto,
+  MockupFailureReason,
   MockupRequestDto,
   MockupResponseDto,
 } from "@cro/shared";
-import { generateFixMockup } from "../lib/mockup";
+import { generateFixMockups, mockupSkipReason } from "../lib/mockup";
 import { getClientIp, rateLimit, RATE_LIMITS } from "../lib/rate-limit";
 
 const mockup = new Hono();
@@ -24,7 +25,10 @@ mockup.post("/", async (c) => {
       String(Math.max(1, Math.ceil((rl.reset - Date.now()) / 1000)))
     );
     return c.json(
-      { error: "Too many requests. Please wait a moment and try again." },
+      {
+        error: "Too many requests. Please wait a moment and try again.",
+        reason: "rate_limited" satisfies MockupFailureReason,
+      },
       429
     );
   }
@@ -41,11 +45,21 @@ mockup.post("/", async (c) => {
     typeof body.mimeType === "string" ? body.mimeType : "image/jpeg";
 
   if (!image) {
-    return c.json({ mockup: null } satisfies MockupResponseDto);
+    return c.json({
+      mockup: null,
+      mockups: [],
+      reason: mockupSkipReason() ?? "upstream_failed",
+    } satisfies MockupResponseDto);
   }
 
   if (image.length > MAX_IMAGE_BASE64_LEN) {
-    return c.json({ error: "Image payload too large." }, 413);
+    return c.json(
+      {
+        error: "Image payload too large.",
+        reason: "payload_too_large" satisfies MockupFailureReason,
+      },
+      413
+    );
   }
 
   if (!/^image\/(png|jpeg|jpg|webp)$/i.test(mimeType)) {
@@ -62,30 +76,46 @@ mockup.post("/", async (c) => {
     : [];
 
   try {
-    const result = await generateFixMockup({
+    const { mockups: results, reason } = await generateFixMockups({
       imageBase64: image,
       mimeType,
       host: String(body.host ?? ""),
+      rotateSeed:
+        typeof body.rotateSeed === "string" && body.rotateSeed
+          ? body.rotateSeed
+          : undefined,
       primaryBottleneck: body.primaryBottleneck
         ? String(body.primaryBottleneck)
         : undefined,
       issues,
     });
 
-    const dto: MockupDto | null = result
-      ? {
-          id: randomUUID(),
-          device: result.device,
-          url: result.dataUri,
-          width: result.width,
-          height: result.height,
-        }
-      : null;
+    const dtos: MockupDto[] = results.map((result) => ({
+      id: randomUUID(),
+      device: result.device,
+      url: result.dataUri,
+      width: result.width,
+      height: result.height,
+      variant: result.variant,
+      patternName: result.patternName,
+      uplift: result.uplift,
+      winRate: result.winRate,
+      sampleSize: result.sampleSize,
+      source: "generated",
+    }));
 
-    return c.json({ mockup: dto } satisfies MockupResponseDto);
+    return c.json({
+      mockup: dtos[0] ?? null,
+      mockups: dtos,
+      ...(dtos.length === 0 && reason ? { reason } : {}),
+    } satisfies MockupResponseDto);
   } catch (err) {
     console.error("[api/mockup] generation failed:", err);
-    return c.json({ mockup: null } satisfies MockupResponseDto);
+    return c.json({
+      mockup: null,
+      mockups: [],
+      reason: "upstream_failed",
+    } satisfies MockupResponseDto);
   }
 });
 

@@ -11,7 +11,7 @@ const PRODUCT_LINKS = [
 ];
 
 const COMPANY_LINKS = [
-  { href: config.bookCallUrl, label: "Get a demo", external: true },
+  { href: config.bookCallUrl, label: "Fix My Page", external: true },
   { href: config.contactUrl, label: "Contact us" },
   { href: config.linkedinUrl, label: "LinkedIn", external: true },
 ];
@@ -25,7 +25,7 @@ export function Footer() {
         className="pointer-events-none absolute inset-x-0 -top-24 h-48 bg-[radial-gradient(ellipse_at_center,hsl(var(--primary)/0.12),transparent_70%)]"
       />
       <div className="container relative py-14">
-        <div className="grid gap-10 md:grid-cols-[1.6fr_1fr_1fr_1.4fr]">
+        <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-[1.6fr_1fr_1fr_1.4fr]">
           <div className="max-w-sm">
             <Logo />
             <p className="mt-4 text-sm leading-relaxed text-muted-foreground">

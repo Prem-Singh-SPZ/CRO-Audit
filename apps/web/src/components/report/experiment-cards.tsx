@@ -8,7 +8,8 @@ import {
   TrendingUp,
   ArrowRight,
   Sparkles,
-  Layers,
+  ChevronDown,
+  Loader2,
 } from "lucide-react";
 
 import {
@@ -18,11 +19,13 @@ import {
   type ScreenshotDto,
   type MockupDto,
 } from "@cro/shared";
-import { SEVERITY_META } from "@/lib/report-ui";
+import { COMPLEXITY_META, SEVERITY_META } from "@/lib/report-ui";
 import { config } from "@/lib/config";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ExperimentEvidence } from "./experiment-evidence";
+import { experimentPreviewFrame } from "@/lib/experiment-preview";
 
 // Friendly, page-oriented labels for the raw issue categories so each group
 // reads like a section of the page (mirrors Coframe's per-section experiments).
@@ -80,18 +83,64 @@ export function ExperimentCards({
   issues,
   screenshots,
   mockups,
+  mockupPending = false,
+  skipRedesign = false,
 }: {
   issues: IssueDto[];
   screenshots: ScreenshotDto[];
   mockups: MockupDto[];
+  mockupPending?: boolean;
+  skipRedesign?: boolean;
 }) {
   const groups = React.useMemo(() => groupBySection(issues), [issues]);
+  const [section, setSection] = React.useState(groups[0]?.category ?? "");
 
-  // Running experiment number across all sections (Experiment 01, 02, ...).
-  let experimentIndex = 0;
+  React.useEffect(() => {
+    if (groups.length > 0 && !groups.some((g) => g.category === section)) {
+      setSection(groups[0].category);
+    }
+  }, [groups, section]);
+
+  const startIndex = React.useMemo(() => {
+    const map = new Map<string, number>();
+    let offset = 0;
+    for (const group of groups) {
+      map.set(group.category, offset);
+      offset += group.issues.length;
+    }
+    return map;
+  }, [groups]);
+
+  const renderGroup = (group: SectionGroup) => (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {group.issues.map((issue, i) => {
+        const before =
+          screenshots.find((s) => s.device === "desktop" && s.url) ??
+          screenshots.find((s) => s.url);
+        const after = skipRedesign
+          ? undefined
+          : mockups.find((m) => m.device === "desktop" && m.url) ??
+            mockups.find((m) => m.url);
+        return (
+          <ExperimentCard
+            key={issue.id}
+            index={(startIndex.get(group.category) ?? 0) + i + 1}
+            issue={issue}
+            beforeUrl={before?.url}
+            afterUrl={after?.url}
+            imageWidth={before?.width ?? 1440}
+            imageHeight={before?.height ?? 900}
+            mockupPending={!skipRedesign && mockupPending}
+            skipRedesign={skipRedesign}
+          />
+        );
+      })}
+      <ExperimentEvidence category={group.category} />
+    </div>
+  );
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-6">
       <div className="flex items-start gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
           <FlaskConical className="h-5 w-5" />
@@ -99,53 +148,34 @@ export function ExperimentCards({
         <div>
           <h3 className="text-lg font-semibold">Suggested experiments by section</h3>
           <p className="text-sm text-muted-foreground">
-            Each finding becomes a testable experiment — grouped by page section,
-            with a before/after concept, expected lift, and the evidence behind
-            it. We recommend the fix; our team can ship it for you.
+            Before/after concepts, grouped by page section.
           </p>
         </div>
       </div>
 
-      {groups.map((group) => (
-        <section key={group.category} className="space-y-4">
-          <div className="flex items-center gap-3">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-              <Layers className="h-4 w-4" />
-            </span>
-            <h4 className="text-base font-semibold">{group.label}</h4>
-            <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
-              {group.issues.length} experiment
-              {group.issues.length === 1 ? "" : "s"}
-            </span>
+      {groups.length > 1 ? (
+        <Tabs value={section} onValueChange={setSection}>
+          <div className="overflow-x-auto pb-1">
+            <TabsList>
+              {groups.map((group) => (
+                <TabsTrigger key={group.category} value={group.category}>
+                  {group.label}
+                  <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                    {group.issues.length}
+                  </span>
+                </TabsTrigger>
+              ))}
+            </TabsList>
           </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            {group.issues.map((issue) => {
-              experimentIndex += 1;
-              const before =
-                screenshots.find((s) => s.device === issue.device && s.url) ??
-                screenshots.find((s) => s.url);
-              const after =
-                mockups.find((m) => m.device === issue.device && m.url) ??
-                mockups.find((m) => m.url);
-              return (
-                <ExperimentCard
-                  key={issue.id}
-                  index={experimentIndex}
-                  issue={issue}
-                  beforeUrl={before?.url}
-                  afterUrl={after?.url}
-                />
-              );
-            })}
-          </div>
-
-          {/* Evidence-backed alternate experiments for this component, drawn
-              from Spiralyze's proven win-pattern library. Renders nothing for
-              categories with no comparable pattern data. */}
-          <ExperimentEvidence category={group.category} />
-        </section>
-      ))}
+          {groups.map((group) => (
+            <TabsContent key={group.category} value={group.category}>
+              {renderGroup(group)}
+            </TabsContent>
+          ))}
+        </Tabs>
+      ) : groups[0] ? (
+        renderGroup(groups[0])
+      ) : null}
     </div>
   );
 }
@@ -155,11 +185,19 @@ function ExperimentCard({
   issue,
   beforeUrl,
   afterUrl,
+  imageWidth,
+  imageHeight,
+  mockupPending = false,
+  skipRedesign = false,
 }: {
   index: number;
   issue: IssueDto;
   beforeUrl?: string;
   afterUrl?: string;
+  imageWidth: number;
+  imageHeight: number;
+  mockupPending?: boolean;
+  skipRedesign?: boolean;
 }) {
   const meta = SEVERITY_META[issue.severity];
   const lift = estimateRealisticLift(issue.category);
@@ -185,6 +223,12 @@ function ExperimentCard({
         afterUrl={afterUrl}
         x={issue.annotationX}
         y={issue.annotationY}
+        w={issue.annotationW}
+        h={issue.annotationH}
+        imageWidth={imageWidth}
+        imageHeight={imageHeight}
+        mockupPending={mockupPending}
+        skipRedesign={skipRedesign}
       />
 
       <div className="flex flex-1 flex-col p-5">
@@ -200,34 +244,11 @@ function ExperimentCard({
 
         <h5 className="mt-2 font-semibold leading-snug">{issue.title}</h5>
 
-        {/* Strategic rationale */}
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          {issue.whyItMatters || issue.psychology}
-        </p>
-
-        {/* The proposed change */}
-        {issue.suggestedFix && (
-          <div className="mt-3 rounded-xl bg-accent/40 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-primary">
-              Proposed change
-            </p>
-            <p className="mt-1 text-sm leading-relaxed text-foreground/90">
-              {issue.suggestedFix}
-            </p>
-          </div>
-        )}
-
-        {/* Evidence grounded in Spiralyze test data */}
-        {lift && (
-          <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground/80">
-            Based on {lift.categoryLabel} winners — e.g.{" "}
-            <span className="font-medium text-foreground/80">
-              &ldquo;{lift.topPattern.name}&rdquo; +{lift.topPattern.uplift}%
-            </span>{" "}
-            · {lift.winRate}% win rate across{" "}
-            {lift.sampleSize.toLocaleString()} A/B tests.
-          </p>
-        )}
+        <WhyExperiment
+          rationale={issue.whyItMatters || issue.psychology}
+          suggestedFix={issue.suggestedFix}
+          lift={lift}
+        />
 
         {/* Confidence */}
         <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
@@ -244,8 +265,8 @@ function ExperimentCard({
           <span className="tabular-nums">{issue.confidence}%</span>
         </div>
 
-        <div className="mt-auto flex items-center justify-between border-t pt-3">
-          <div className="flex items-center gap-2">
+        <div className="mt-auto flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
             <span
               className={cn(
                 "rounded-full px-2 py-0.5 text-xs font-medium",
@@ -259,10 +280,20 @@ function ExperimentCard({
                 {liftLabel} lift
               </span>
             )}
+            {issue.complexity && (
+              <span
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-xs font-medium",
+                  COMPLEXITY_META[issue.complexity].badge
+                )}
+              >
+                {COMPLEXITY_META[issue.complexity].label}
+              </span>
+            )}
           </div>
-          <Button asChild variant="ghost" size="sm">
+          <Button asChild variant="ghost" size="sm" className="self-start sm:self-auto">
             <Link href={config.bookCallUrl} target="_blank">
-              Ship this fix
+              Fix My Page
               <ArrowRight className="h-4 w-4" />
             </Link>
           </Button>
@@ -272,53 +303,150 @@ function ExperimentCard({
   );
 }
 
-// Before/after visual for a single experiment. "Before" zooms the captured page
-// into the finding's annotation region; "After" shows the AI redesign concept
-// (shared full-page mockup) when available. A Control/Concept toggle echoes the
-// Figma Control/Editable framing.
+function WhyExperiment({
+  rationale,
+  suggestedFix,
+  lift,
+}: {
+  rationale?: string;
+  suggestedFix?: string;
+  lift: ReturnType<typeof estimateRealisticLift>;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const hasBody = Boolean(rationale || suggestedFix || lift);
+  if (!hasBody) return null;
+
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
+      >
+        <ChevronDown
+          className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")}
+        />
+        Why this experiment
+      </button>
+      {open && (
+        <div className="mt-2 space-y-3">
+          {rationale && (
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              {rationale}
+            </p>
+          )}
+          {suggestedFix && (
+            <div className="rounded-xl bg-accent/40 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-primary">
+                Proposed change
+              </p>
+              <p className="mt-1 text-sm leading-relaxed text-foreground/90">
+                {suggestedFix}
+              </p>
+            </div>
+          )}
+          {lift && (
+            <p className="text-[11px] leading-relaxed text-muted-foreground/80">
+              Based on {lift.categoryLabel} winners — e.g.{" "}
+              <span className="font-medium text-foreground/80">
+                &ldquo;{lift.topPattern.name}&rdquo; +{lift.topPattern.uplift}%
+              </span>{" "}
+              · {lift.winRate}% win rate across{" "}
+              {lift.sampleSize.toLocaleString()} A/B tests.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BeforeAfter({
   beforeUrl,
   afterUrl,
   x,
   y,
+  w,
+  h,
+  imageWidth,
+  imageHeight,
+  mockupPending = false,
+  skipRedesign = false,
 }: {
   beforeUrl?: string;
   afterUrl?: string;
   x?: number | null;
   y?: number | null;
+  w?: number | null;
+  h?: number | null;
+  imageWidth: number;
+  imageHeight: number;
+  mockupPending?: boolean;
+  skipRedesign?: boolean;
 }) {
   const [mode, setMode] = React.useState<"before" | "after">("before");
-  const hasAfter = !!afterUrl;
-  const active = mode === "after" && hasAfter ? afterUrl : beforeUrl;
+  const hasAfter = !skipRedesign && !!afterUrl;
+  const pending = !skipRedesign && mockupPending && !hasAfter;
+  const showAfter = mode === "after" && hasAfter;
+  const showPendingConcept = mode === "after" && pending;
+  const active = showAfter ? afterUrl : beforeUrl;
+  const frame = experimentPreviewFrame({
+    x: showAfter ? null : x,
+    y: showAfter ? null : y,
+    w: showAfter ? null : w,
+    h: showAfter ? null : h,
+    imageWidth,
+    imageHeight,
+  });
 
-  // Zoom into the annotated region when we have coordinates; otherwise frame the
-  // top of the page. A larger background-size crops to the point of interest.
-  const hasPoint = x != null && y != null;
-  const backgroundSize = hasPoint ? "240%" : "cover";
-  const backgroundPosition = hasPoint
-    ? `${(x as number) * 100}% ${(y as number) * 100}%`
-    : "center top";
-
-  if (!beforeUrl) {
-    return (
-      <div className="flex h-40 items-center justify-center border-b bg-muted/30 text-xs text-muted-foreground">
-        No preview available
-      </div>
-    );
-  }
+  React.useEffect(() => {
+    if (mode === "after" && !hasAfter && !pending) {
+      setMode("before");
+    }
+  }, [mode, hasAfter, pending]);
 
   return (
     <div className="relative border-b bg-muted/30">
       <div
-        className="h-44 w-full bg-no-repeat transition-all duration-500"
-        style={{
-          backgroundImage: `url(${active})`,
-          backgroundSize,
-          backgroundPosition,
-        }}
+        className="relative aspect-video w-full overflow-hidden"
         role="img"
-        aria-label={mode === "after" ? "Redesign concept" : "Current design"}
-      />
+        aria-label={
+          showAfter
+            ? "Redesign concept"
+            : showPendingConcept
+              ? "Generating redesign concept"
+              : "Current design"
+        }
+      >
+        {beforeUrl && active ? (
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={active}
+              alt=""
+              className="absolute max-w-none origin-top-left"
+              style={{
+                width: `${100 / frame.width}%`,
+                height: "auto",
+                transform: `translate(${-frame.left * 100}%, ${-frame.top * 100}%)`,
+              }}
+            />
+          </>
+        ) : (
+          <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
+            No preview available
+          </div>
+        )}
+        {showPendingConcept ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/70 text-center backdrop-blur-sm">
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <p className="px-4 text-xs font-medium">
+              Generating your redesign concept…
+            </p>
+          </div>
+        ) : null}
+      </div>
       {/* Label */}
       <span
         className={cn(
@@ -338,36 +466,39 @@ function BeforeAfter({
         )}
       </span>
 
-      {/* Control / Concept toggle */}
-      {hasAfter && (
-        <div className="absolute right-3 top-3 inline-flex rounded-full border bg-background/85 p-0.5 shadow-sm backdrop-blur">
-          <button
-            type="button"
-            onClick={() => setMode("before")}
-            aria-pressed={mode === "before"}
-            className={cn(
-              "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
-              mode === "before"
-                ? "bg-foreground text-background"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            Control
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("after")}
-            aria-pressed={mode === "after"}
-            className={cn(
-              "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
-              mode === "after"
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            Concept
-          </button>
-        </div>
+      {skipRedesign ? null : (
+      <div className="absolute right-3 top-3 inline-flex rounded-full border bg-background/85 p-0.5 shadow-sm backdrop-blur">
+        <button
+          type="button"
+          onClick={() => setMode("before")}
+          aria-pressed={mode === "before"}
+          className={cn(
+            "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
+            mode === "before"
+              ? "bg-foreground text-background"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Control
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (!hasAfter && !pending) return;
+            setMode("after");
+          }}
+          aria-pressed={mode === "after"}
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
+            mode === "after"
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+          Concept
+        </button>
+      </div>
       )}
     </div>
   );

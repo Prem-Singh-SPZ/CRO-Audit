@@ -8,6 +8,7 @@ import { EmailGateModal } from "./email-gate-modal";
 import {
   getVerification,
   setVerification as persistVerification,
+  clearVerification,
 } from "@/lib/verification";
 
 interface GateContextValue {
@@ -15,6 +16,7 @@ interface GateContextValue {
   token: string | null;
   email: string | null;
   openGate: () => void;
+  resetVerification: () => void;
 }
 
 const GateContext = React.createContext<GateContextValue | null>(null);
@@ -32,6 +34,8 @@ export function ReportGateProvider({
   url,
   score,
   device,
+  primaryBottleneck,
+  topIssueTitle,
   children,
 }: {
   issueCount: number;
@@ -42,6 +46,8 @@ export function ReportGateProvider({
   url?: string;
   score?: number;
   device?: "desktop" | "mobile";
+  primaryBottleneck?: string;
+  topIssueTitle?: string;
   children: React.ReactNode;
 }) {
   const [modalOpen, setModalOpen] = React.useState(false);
@@ -58,14 +64,22 @@ export function ReportGateProvider({
 
   const verified = readOnly || token != null;
 
+  const resetVerification = React.useCallback(() => {
+    setToken(null);
+    setEmail(null);
+    clearVerification();
+    setModalOpen(true);
+  }, []);
+
   const value = React.useMemo<GateContextValue>(
     () => ({
       verified,
       token,
       email,
       openGate: () => setModalOpen(true),
+      resetVerification,
     }),
-    [verified, token, email]
+    [verified, token, email, resetVerification]
   );
 
   return (
@@ -79,6 +93,8 @@ export function ReportGateProvider({
         url={url}
         score={score}
         device={device}
+        primaryBottleneck={primaryBottleneck}
+        topIssueTitle={topIssueTitle}
         onVerified={(t, e) => {
           setToken(t);
           setEmail(e);
@@ -109,7 +125,7 @@ export function Locked({
   if (verified) return <>{children}</>;
 
   return (
-    <div className="relative">
+    <div className="relative print:hidden">
       <div
         className="pointer-events-none select-none blur-sm [mask-image:linear-gradient(to_bottom,black,black_30%,transparent)]"
         aria-hidden="true"

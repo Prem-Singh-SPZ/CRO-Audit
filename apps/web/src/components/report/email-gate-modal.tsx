@@ -23,6 +23,8 @@ export function EmailGateModal({
   url,
   score,
   device,
+  primaryBottleneck,
+  topIssueTitle,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -33,6 +35,8 @@ export function EmailGateModal({
   url?: string;
   score?: number;
   device?: "desktop" | "mobile";
+  primaryBottleneck?: string;
+  topIssueTitle?: string;
 }) {
   const [step, setStep] = React.useState<"email" | "code">("email");
   const [email, setEmail] = React.useState("");
@@ -87,6 +91,8 @@ export function EmailGateModal({
           url,
           score,
           device,
+          primaryBottleneck,
+          topIssueTitle,
         }),
       });
       const data = await res.json().catch(() => null);

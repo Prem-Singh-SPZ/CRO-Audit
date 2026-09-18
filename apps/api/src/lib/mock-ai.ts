@@ -6,6 +6,8 @@ import type {
   LighthouseSummary,
   ScoreCategory,
   SeverityLevel,
+  LandmarkBox,
+  LandmarkId,
 } from "@cro/shared";
 import { reportSchema, SCORE_CATEGORIES } from "@cro/shared";
 import { safeHost } from "@cro/shared";
@@ -13,6 +15,7 @@ import { safeHost } from "@cro/shared";
 export interface AnalyzeInput {
   pageContext: PageContext;
   lighthouse: LighthouseSummary;
+  landmarks?: LandmarkBox[];
 }
 
 const clamp = (n: number, min = 0, max = 100) =>
@@ -20,6 +23,51 @@ const clamp = (n: number, min = 0, max = 100) =>
 
 const truncate = (s: string, n = 60) =>
   s.length > n ? `${s.slice(0, n - 1).trim()}…` : s;
+
+type PinKind = "headline" | "cta" | "hero" | "mid" | "footer" | "nav" | "wide";
+
+/** Heuristic highlight box — spread across the page so pins don't stack at 0.5. */
+function pin(kind: PinKind, x: number, y: number) {
+  const size: Record<PinKind, { width: number; height: number }> = {
+    headline: { width: 0.56, height: 0.07 },
+    cta: { width: 0.2, height: 0.055 },
+    hero: { width: 0.48, height: 0.16 },
+    mid: { width: 0.42, height: 0.1 },
+    footer: { width: 0.7, height: 0.09 },
+    nav: { width: 0.24, height: 0.055 },
+    wide: { width: 0.62, height: 0.1 },
+  };
+  return { device: "desktop" as const, x, y, ...size[kind] };
+}
+
+const PIN_LANDMARK: Record<PinKind, LandmarkId> = {
+  headline: "h1",
+  cta: "cta",
+  hero: "hero",
+  mid: "form",
+  footer: "footer",
+  nav: "nav",
+  wide: "hero",
+};
+
+function pinAt(
+  landmarks: LandmarkBox[] | undefined,
+  kind: PinKind,
+  x: number,
+  y: number
+) {
+  const id = PIN_LANDMARK[kind];
+  const hit = landmarks?.find((l) => l.id === id);
+  if (!hit) return pin(kind, x, y);
+  return {
+    device: "desktop" as const,
+    x: hit.x,
+    y: hit.y,
+    width: hit.width,
+    height: hit.height,
+    element: hit.id,
+  };
+}
 
 // CTA labels that test poorly because they describe the mechanic, not the value.
 const GENERIC_CTA =
@@ -53,6 +101,8 @@ function seededRandom(seed: string): () => number {
  */
 export function analyzeMock(input: AnalyzeInput): ReportJson {
   const { pageContext: ctx, lighthouse: lh } = input;
+  const pinBox = (kind: PinKind, x: number, y: number) =>
+    pinAt(input.landmarks, kind, x, y);
   const rand = seededRandom(ctx.finalUrl);
   const jitter = (base: number, spread = 6) =>
     clamp(base + (rand() - 0.5) * spread);
@@ -166,7 +216,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "Add one benefit-driven H1 stating the outcome you deliver, e.g. 'Get [result] without [pain]'.",
       estimatedConversionImpact: "+6-12%",
-      annotation: { device: "desktop", x: 0.5, y: 0.22 },
+      annotation: pinBox("headline", 0.32, 0.2),
     });
   } else if (!singleH1) {
     push({
@@ -184,7 +234,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "Keep one H1 for the core value proposition; demote the rest to H2.",
       estimatedConversionImpact: "+1-3%",
-      annotation: { device: "desktop", x: 0.5, y: 0.2 },
+      annotation: pinBox("headline", 0.34, 0.18),
     });
   } else if (headlineTooShort || !headlineHasValue) {
     push({
@@ -204,7 +254,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
         30
       )} — [specific outcome] in [timeframe]". Lead with the benefit, not the brand.`,
       estimatedConversionImpact: "+4-9%",
-      annotation: { device: "desktop", x: 0.5, y: 0.24 },
+      annotation: pinBox("headline", 0.3, 0.22),
     });
   } else if (headlineTooLong) {
     push({
@@ -222,7 +272,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "Tighten to a single, punchy benefit statement (~6-12 words) and move detail to the subhead.",
       estimatedConversionImpact: "+2-4%",
-      annotation: { device: "desktop", x: 0.5, y: 0.24 },
+      annotation: pinBox("headline", 0.3, 0.22),
     });
   }
 
@@ -241,7 +291,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "Add one visually dominant CTA with value-led copy above the fold and repeat it after each proof section.",
       estimatedConversionImpact: "+8-15%",
-      annotation: { device: "desktop", x: 0.5, y: 0.4 },
+      annotation: pinBox("cta", 0.28, 0.4),
     });
   } else if (genericCtas.length > 0) {
     push({
@@ -261,7 +311,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
         20
       )}" with "Get my free audit" or "Start saving today".`,
       estimatedConversionImpact: "+2-5%",
-      annotation: { device: "desktop", x: 0.62, y: 0.42 },
+      annotation: pinBox("cta", 0.62, 0.42),
     });
   } else if (buttonCount > 12) {
     push({
@@ -276,7 +326,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "Establish one primary CTA style; demote secondary actions to lower-contrast/ghost buttons or text links.",
       estimatedConversionImpact: "+2-4%",
-      annotation: { device: "desktop", x: 0.5, y: 0.45 },
+      annotation: pinBox("cta", 0.48, 0.46),
     });
   }
 
@@ -295,7 +345,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "Add testimonials with names/photos, recognizable client logos, ratings, or usage stats near the primary CTA.",
       estimatedConversionImpact: "+5-9%",
-      annotation: { device: "desktop", x: 0.5, y: 0.68 },
+      annotation: pinBox("wide", 0.38, 0.68),
     });
   } else if (!ctx.hasTrustBadges) {
     push({
@@ -311,7 +361,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "Add a guarantee, security reassurance, or concise FAQ directly beside the primary CTA.",
       estimatedConversionImpact: "+3-6%",
-      annotation: { device: "desktop", x: 0.5, y: 0.72 },
+      annotation: pinBox("cta", 0.58, 0.72),
     });
   }
 
@@ -335,7 +385,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "Reduce to essential fields (often just email), defer the rest, or use a multi-step form with a progress bar.",
       estimatedConversionImpact: "+7-14%",
-      annotation: { device: "desktop", x: 0.5, y: 0.55 },
+      annotation: pinBox("mid", 0.5, 0.55),
     });
   }
 
@@ -356,7 +406,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "Optimize the LCP image, defer non-critical JS, enable compression/caching, and lazy-load below-the-fold media.",
       estimatedConversionImpact: "+4-10%",
-      annotation: { device: "desktop", x: 0.5, y: 0.3 },
+      annotation: pinBox("hero", 0.26, 0.14),
     });
   }
 
@@ -375,7 +425,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         'Add <meta name="viewport" content="width=device-width, initial-scale=1"> and verify responsive breakpoints.',
       estimatedConversionImpact: "+10-20%",
-      annotation: { device: "desktop", x: 0.5, y: 0.5 },
+      annotation: pinBox("mid", 0.7, 0.5),
     });
   }
 
@@ -396,7 +446,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "On conversion pages, cut nav to the essentials (or use a minimal 'lander' header) and keep the CTA persistent.",
       estimatedConversionImpact: "+2-5%",
-      annotation: { device: "desktop", x: 0.85, y: 0.06 },
+      annotation: pinBox("nav", 0.82, 0.06),
     });
   }
 
@@ -487,7 +537,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "Add pricing or a 'How pricing works' explainer with anchoring and a recommended tier.",
       estimatedConversionImpact: "+3-6%",
-      annotation: { device: "desktop", x: 0.5, y: 0.78 },
+      annotation: pinBox("footer", 0.5, 0.86),
     });
   }
 
@@ -506,7 +556,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "Increase headline size/contrast, add whitespace, and make the primary CTA the highest-contrast element.",
       estimatedConversionImpact: "+2-5%",
-      annotation: { device: "desktop", x: 0.5, y: 0.35 },
+      annotation: pinBox("hero", 0.36, 0.32),
     });
   }
 
@@ -526,7 +576,7 @@ export function analyzeMock(input: AnalyzeInput): ReportJson {
       suggestedFix:
         "Add a 30-60s product walkthrough or interactive demo near the hero CTA.",
       estimatedConversionImpact: "+1-3%",
-      annotation: { device: "desktop", x: 0.7, y: 0.35 },
+      annotation: pinBox("hero", 0.72, 0.34),
     });
   }
 
@@ -705,6 +755,114 @@ function buildBlockedReport(
   return reportSchema.parse(report);
 }
 
+export interface HeuristicCandidate {
+  id: string;
+  claim: string;
+  evidence: string;
+}
+
+/**
+ * Rule-engine candidates injected into the vision prompt so Gemini confirms or
+ * refutes each with a quote — we do not wait for the model to invent them.
+ */
+export function collectHeuristicCandidates(pageContext: PageContext): HeuristicCandidate[] {
+  const ctx = pageContext;
+  const h1 = ctx.headings.h1;
+  const primaryH1 = h1[0] ?? "";
+  const genericCtas = ctx.ctaTexts.filter((c) => GENERIC_CTA.test(c.trim()));
+  const formFieldTotal = ctx.forms.reduce((a, f) => a + f.fieldCount, 0);
+  const out: HeuristicCandidate[] = [];
+
+  if (h1.length === 0) {
+    out.push({
+      id: "missing-h1",
+      claim: "The page is missing a clear H1 headline.",
+      evidence: "Crawled headings.h1 is empty.",
+    });
+  } else if (h1.length > 1) {
+    out.push({
+      id: "multiple-h1",
+      claim: `Multiple H1s dilute the message (${h1.length} found).`,
+      evidence: `H1s: ${h1
+        .slice(0, 3)
+        .map((t) => `"${truncate(t, 40)}"`)
+        .join(", ")}.`,
+    });
+  } else if (primaryH1.length < 12 || !VALUE_WORDS.test(primaryH1)) {
+    out.push({
+      id: "weak-h1",
+      claim: "The H1 does not communicate a concrete benefit.",
+      evidence: `H1 reads "${truncate(primaryH1, 80)}".`,
+    });
+  }
+
+  if (ctx.ctaTexts.length === 0) {
+    out.push({
+      id: "missing-cta",
+      claim: "No prominent primary call-to-action was detected.",
+      evidence: "ctaTexts is empty.",
+    });
+  } else if (genericCtas.length > 0) {
+    out.push({
+      id: "generic-cta",
+      claim: "Primary CTA copy is generic / mechanic-led.",
+      evidence: `Labels: ${genericCtas
+        .slice(0, 4)
+        .map((c) => `"${c.trim()}"`)
+        .join(", ")}.`,
+    });
+  }
+
+  if (formFieldTotal > 6) {
+    out.push({
+      id: "heavy-form",
+      claim: `Lead form asks for too much (${formFieldTotal} fields).`,
+      evidence: `Field names include ${ctx.forms
+        .flatMap((f) => f.fields.map((fl) => fl.name || fl.type))
+        .filter(Boolean)
+        .slice(0, 6)
+        .join(", ")}.`,
+    });
+  }
+
+  if (!ctx.hasTestimonials && !ctx.hasSocialProof) {
+    out.push({
+      id: "no-testimonials",
+      claim: "No testimonials or social-proof copy was detected.",
+      evidence: "hasTestimonials and hasSocialProof are both false.",
+    });
+  }
+
+  if (!ctx.hasViewportMeta) {
+    out.push({
+      id: "no-viewport",
+      claim: "Missing responsive viewport configuration.",
+      evidence: "hasViewportMeta is false.",
+    });
+  }
+
+  if (ctx.wordCount > 0 && ctx.wordCount < 120) {
+    out.push({
+      id: "thin-copy",
+      claim: "Body copy is too thin to handle objections.",
+      evidence: `wordCount is ~${ctx.wordCount}.`,
+    });
+  }
+
+  if (ctx.navLinks.length > 8) {
+    out.push({
+      id: "busy-nav",
+      claim: `Navigation has too many exits (${ctx.navLinks.length} links).`,
+      evidence: `Nav labels: ${ctx.navLinks
+        .slice(0, 6)
+        .map((l) => `"${truncate(l.text, 18)}"`)
+        .join(", ")}.`,
+    });
+  }
+
+  return out;
+}
+
 function buildSummary(
   ctx: PageContext,
   score: number,
@@ -721,5 +879,5 @@ function buildSummary(
   const headlineNote = ctx.headings.h1[0]
     ? ` Its headline reads "${truncate(ctx.headings.h1[0], 60)}".`
     : " No clear H1 headline was detected.";
-  return `${host} ${tone}, scoring ${score}/100 on our CRO framework.${headlineNote} We identified ${critical} critical and ${high} high-severity issues spanning messaging clarity, trust, and conversion friction. Fixing the top opportunities first should produce the fastest lift; the recommendations below are prioritized by expected impact versus implementation effort.`;
+  return `${host} ${tone}, scoring ${score}/100 with ${critical} critical and ${high} high-severity issues.${headlineNote}`;
 }

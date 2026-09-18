@@ -17,7 +17,7 @@ export function TrustedBy() {
   const items = [...BADGES, ...BADGES];
 
   return (
-    <section className="border-y bg-muted/20 py-10">
+    <section className="overflow-x-clip border-y bg-muted/20 py-10">
       <Reveal className="container">
         <p className="text-center text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
           Powered by the frameworks the best CRO teams trust

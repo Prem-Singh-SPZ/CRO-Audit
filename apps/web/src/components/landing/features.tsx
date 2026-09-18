@@ -34,43 +34,18 @@ const HERO_FEATURES = [
     tag: "Plan",
     title: "Prioritized action plan",
     description:
-      "Every issue ranked by business impact vs. implementation effort so you know exactly what to fix first.",
+      "Annotated before/after of your hero, each finding ranked by lift vs. effort — then book our team to ship it.",
     gradient: "from-success/20 via-success/10 to-transparent",
   },
 ] as const;
 
 // The remaining supporting features, shown as a compact grid.
 const FEATURES = [
-  {
-    icon: Gauge,
-    title: "Lighthouse, enhanced",
-    description:
-      "Performance, accessibility, SEO, and best practices - explained in terms of conversion impact, not just scores.",
-  },
-  {
-    icon: Monitor,
-    title: "Full-page desktop review",
-    description:
-      "A full-page desktop screenshot analyzed top to bottom - hero, mid-page, and footer - where conversions are won or lost.",
-  },
-  {
-    icon: BarChart3,
-    title: "Beautiful reports",
-    description:
-      "Score gauges, radar charts, annotated screenshots, and category breakdowns you can share with your team.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Trust & objections",
-    description:
-      "Detects missing social proof, trust signals, risk reversal, and the objections quietly killing your conversions.",
-  },
-  {
-    icon: FileDown,
-    title: "Export & share",
-    description:
-      "Download a polished PDF or export the raw JSON to share your report with stakeholders in one click.",
-  },
+  { icon: Gauge, title: "Lighthouse, enhanced" },
+  { icon: Monitor, title: "Full-page desktop review" },
+  { icon: BarChart3, title: "Beautiful reports" },
+  { icon: ShieldCheck, title: "Trust & objections" },
+  { icon: FileDown, title: "Export & share" },
 ] as const;
 
 export function Features() {
@@ -84,10 +59,6 @@ export function Features() {
           <h2 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
             A complete CRO team, in one audit
           </h2>
-          <p className="mt-4 text-lg text-muted-foreground">
-            Not a generic scanner. Genuine, expert-level analysis of the things
-            that actually move your conversion rate.
-          </p>
         </Reveal>
 
         {/* Headline gradient cards */}
@@ -123,14 +94,11 @@ export function Features() {
         <div className="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {FEATURES.map((feature, i) => (
             <Reveal key={feature.title} delay={i % 3}>
-              <div className="card-premium group h-full p-6 hover:-translate-y-1">
+              <div className="card-premium group flex h-full flex-col items-center p-5 text-center hover:-translate-y-1">
                 <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
                   <feature.icon className="h-5 w-5" />
                 </div>
-                <h3 className="mt-5 font-semibold">{feature.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                  {feature.description}
-                </p>
+                <h3 className="mt-4 text-sm font-semibold">{feature.title}</h3>
               </div>
             </Reveal>
           ))}

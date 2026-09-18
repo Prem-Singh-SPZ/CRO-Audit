@@ -10,7 +10,9 @@ import {
 import { analyzePage, analyzeRenderedHtml } from "../lib/analyzer";
 import { getPageSpeed, fallbackLighthouse } from "../lib/pagespeed";
 import { captureScreenshots } from "../lib/screenshot";
+import { applyCaptureOutcome } from "../lib/capture-quality";
 import { generateReport } from "../lib/ai";
+import { buildCompetitorCompare } from "../lib/compare-dimensions";
 import { assertSafeExternalUrl, UnsafeUrlError } from "../lib/net-guard";
 import { getClientIp, rateLimit, RATE_LIMITS } from "../lib/rate-limit";
 import { logEvent, logError } from "../lib/logger";
@@ -21,6 +23,10 @@ import {
 } from "../lib/result-cache";
 
 const analyze = new Hono();
+
+// Deduplicate overlapping POSTs for the same URL+context (React StrictMode
+// remounts, double-clicks). The first job runs; later callers await it.
+const inflight = new Map<string, Promise<ReportResponse>>();
 
 analyze.post("/", async (c) => {
   const { limit, windowMs } = RATE_LIMITS.analyze;
@@ -55,7 +61,13 @@ analyze.post("/", async (c) => {
     targetAudience: parsed.data.targetAudience,
     coreProduct: parsed.data.coreProduct,
     primaryTrafficSource: parsed.data.primaryTrafficSource,
+    competitorUrl: parsed.data.competitorUrl,
   };
+  const competitorUrl = parsed.data.competitorUrl
+    ? /^https?:\/\//i.test(parsed.data.competitorUrl)
+      ? parsed.data.competitorUrl
+      : `https://${parsed.data.competitorUrl}`
+    : undefined;
 
   try {
     await assertSafeExternalUrl(url);
@@ -80,14 +92,46 @@ analyze.post("/", async (c) => {
     return c.json(cached);
   }
 
+  const existing = inflight.get(cacheKey);
+  if (existing) {
+    logEvent("analyze.coalesce", { host });
+    try {
+      return c.json(await existing);
+    } catch {
+      return c.json({ error: "Analysis failed. Please try again." }, 500);
+    }
+  }
+
+  let resolveJob!: (value: ReportResponse) => void;
+  let rejectJob!: (reason: unknown) => void;
+  const job = new Promise<ReportResponse>((resolve, reject) => {
+    resolveJob = resolve;
+    rejectJob = reject;
+  });
+  inflight.set(cacheKey, job);
+
   logEvent("analyze.start", { host });
 
   try {
-    const [crawlContext, pageSpeed, screenshotResult] = await Promise.all([
-      analyzePage(url),
-      getPageSpeed(url),
-      captureScreenshots(url),
-    ]);
+    let competitorSafe = false;
+    if (competitorUrl) {
+      try {
+        await assertSafeExternalUrl(competitorUrl);
+        competitorSafe = safeHost(competitorUrl) !== host;
+      } catch {
+        // Invalid competitor URL should not fail the primary audit.
+      }
+    }
+
+    const [crawlContext, pageSpeed, screenshotResult, competitorContext] =
+      await Promise.all([
+        analyzePage(url),
+        getPageSpeed(url),
+        captureScreenshots(url),
+        competitorSafe && competitorUrl
+          ? analyzePage(competitorUrl).catch(() => null)
+          : Promise.resolve(null),
+      ]);
     let pageContext = crawlContext;
     const screenshots = screenshotResult.screenshots;
     const heroShot = screenshotResult.heroShot;
@@ -118,10 +162,7 @@ analyze.post("/", async (c) => {
       }
     }
 
-    if (screenshotResult.blockedReason && !pageContext.blocked) {
-      pageContext.blocked = true;
-      pageContext.blockReason = screenshotResult.blockedReason;
-    }
+    pageContext = applyCaptureOutcome(pageContext, screenshotResult);
 
     const crawlThin =
       pageContext.wordCount < 60 || pageContext.headings.h1.length === 0;
@@ -134,7 +175,9 @@ analyze.post("/", async (c) => {
       pageContext,
       lighthouse,
       screenshots,
+      bands: screenshotResult.bands,
       auditContext,
+      landmarks: screenshotResult.landmarks,
     });
 
     const now = new Date().toISOString();
@@ -147,8 +190,14 @@ analyze.post("/", async (c) => {
       ...(fallbackReason ? { fallbackReason } : {}),
       blocked: pageContext.blocked,
       clientRendered: !!pageContext.clientRendered,
+      incompleteCapture: !!pageContext.incompleteCapture,
+      liveTest: pageContext.liveTest?.vendor ?? null,
+      screenshotSource: screenshotResult.screenshotSource,
+      archiveCapturedAt: screenshotResult.archiveCapturedAt,
       issues: report.issues.length,
       hasScreenshot: screenshots.length > 0,
+      bands: screenshotResult.bands.length,
+      landmarks: screenshotResult.landmarks.length,
       durationMs: Date.now() - startedAt,
     });
 
@@ -166,6 +215,13 @@ analyze.post("/", async (c) => {
       },
       blocked: pageContext.blocked,
       blockReason: pageContext.blocked ? pageContext.blockReason : null,
+      incompleteCapture: pageContext.incompleteCapture,
+      captureNote: pageContext.incompleteCapture
+        ? pageContext.captureNote ?? null
+        : null,
+      liveTest: pageContext.liveTest ?? null,
+      screenshotSource: screenshotResult.screenshotSource,
+      archiveCapturedAt: screenshotResult.archiveCapturedAt,
       report: {
         id: randomUUID(),
         overallScore: report.overallScore,
@@ -174,7 +230,7 @@ analyze.post("/", async (c) => {
         summary: report.summary,
         strengths: report.strengths,
         weaknesses: report.weaknesses,
-        priority: report.priority,
+        priority: pageContext.liveTest ? "low" : report.priority,
         confidence: report.confidence,
         estimatedImpact: report.estimatedImpact,
         aiProvider: provider,
@@ -186,7 +242,7 @@ analyze.post("/", async (c) => {
         description: i.description,
         whyItMatters: i.whyItMatters,
         psychology: i.psychology || i.whyItMatters,
-        severity: i.severity,
+        severity: pageContext.liveTest ? "INFO" : i.severity,
         confidence: i.confidence,
         businessImpact: i.businessImpact,
         suggestedFix: i.suggestedFix,
@@ -199,6 +255,8 @@ analyze.post("/", async (c) => {
         device: i.annotation?.device ?? null,
         annotationX: i.annotation?.x ?? null,
         annotationY: i.annotation?.y ?? null,
+        annotationW: i.annotation?.width ?? null,
+        annotationH: i.annotation?.height ?? null,
       })),
       recommendations: report.recommendations.map((r) => ({
         id: randomUUID(),
@@ -226,19 +284,27 @@ analyze.post("/", async (c) => {
         seo: lighthouse.seo,
         metrics: lighthouse.metrics,
       },
+      competitorCompare:
+        competitorContext && !competitorContext.blocked
+          ? buildCompetitorCompare(pageContext, competitorContext)
+          : null,
     };
 
     if (!pageContext.blocked) {
       setCachedResult(cacheKey, response);
     }
 
+    resolveJob(response);
     return c.json(response);
   } catch (err) {
+    rejectJob(err);
     logError("analyze.failed", err, {
       host,
       durationMs: Date.now() - startedAt,
     });
     return c.json({ error: "Analysis failed. Please try again." }, 500);
+  } finally {
+    inflight.delete(cacheKey);
   }
 });
 

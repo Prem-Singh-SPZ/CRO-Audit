@@ -4,6 +4,7 @@ import type {
   ComplexityLevel,
   DiyRiskLevel,
 } from "./schema";
+import type { LiveTestInfo } from "./page-context";
 
 export type ScanStatus = "QUEUED" | "RUNNING" | "COMPLETE" | "FAILED";
 
@@ -28,12 +29,23 @@ export interface ScreenshotDto {
 
 // An AI-generated "after" concept: the same page re-imagined with the audit's
 // top conversion fixes applied. Rendered next to the annotated "before".
+// "hero" = marketing page. Form-page mockups store the proven-pattern name
+// on `patternName` and keep a slug on `variant` for older clients.
+export type MockupVariant = "form-over-ui" | "spz-baseline" | "hero" | "pattern";
+
 export interface MockupDto {
   id: string;
   device: "desktop" | "tablet" | "mobile";
   url: string;
   width: number;
   height: number;
+  variant?: MockupVariant;
+  patternName?: string;
+  uplift?: number;
+  winRate?: number;
+  sampleSize?: number;
+  /** Gemini image vs. local overlay on the real screenshot. */
+  source?: "generated" | "composed";
 }
 
 // The compact seed the report page posts to /api/mockup to generate the "after"
@@ -61,6 +73,8 @@ export interface IssueDto {
   device: "desktop" | "tablet" | "mobile" | null;
   annotationX: number | null;
   annotationY: number | null;
+  annotationW: number | null;
+  annotationH: number | null;
 }
 
 export interface RecommendationDto {
@@ -87,6 +101,14 @@ export interface ReportResponse {
   // placeholders in that case; the UI shows a dedicated blocked state instead.
   blocked?: boolean;
   blockReason?: string | null;
+  // Real page captured, but a late form / empty hero slot never painted.
+  incompleteCapture?: boolean;
+  captureNote?: string | null;
+  liveTest?: LiveTestInfo | null;
+  /** live = Chromium shot of the URL; archive = Internet Archive replay. */
+  screenshotSource?: "live" | "archive";
+  /** Human date of the IA snapshot when screenshotSource is archive. */
+  archiveCapturedAt?: string | null;
   report: {
     id: string;
     overallScore: number;
@@ -107,6 +129,21 @@ export interface ReportResponse {
   // Seed for the deferred "after" mockup; null when no screenshot was captured.
   mockupSeed: MockupSeed | null;
   lighthouse: LighthouseDto | null;
+  competitorCompare?: CompetitorCompareDto | null;
+}
+
+export interface CompetitorCompareDimension {
+  key: string;
+  label: string;
+  you: number;
+  them: number;
+}
+
+export interface CompetitorCompareDto {
+  host: string;
+  competitorHost: string;
+  dimensions: CompetitorCompareDimension[];
+  topGap: string;
 }
 
 // Request/response contract for the out-of-band mockup endpoint.
@@ -114,6 +151,8 @@ export interface MockupRequestDto {
   image: string;
   mimeType: string;
   host: string;
+  // Host + scan id (or similar) so each audit rotates to the next pattern pair.
+  rotateSeed?: string;
   primaryBottleneck?: string;
   issues: {
     severity: string;
@@ -123,6 +162,15 @@ export interface MockupRequestDto {
   }[];
 }
 
+export type MockupFailureReason =
+  | "disabled"
+  | "no_key"
+  | "payload_too_large"
+  | "rate_limited"
+  | "upstream_failed";
+
 export interface MockupResponseDto {
   mockup: MockupDto | null;
+  mockups?: MockupDto[];
+  reason?: MockupFailureReason;
 }

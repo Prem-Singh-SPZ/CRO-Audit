@@ -1,0 +1,173 @@
+{
+  "cases": [
+    {
+      "id": "activtrak",
+      "url": "https://www.activtrak.com/",
+      "host": "activtrak.com",
+      "sections": [
+        "Hero / above the fold",
+        "Forms / lead capture",
+        "Social proof / testimonials",
+        "Navigation"
+      ],
+      "bottleneckKeywords": ["headline", "value", "form"],
+      "expectedIssues": [
+        { "id": "headline", "keywords": ["headline", "value"] },
+        { "id": "form", "keywords": ["form", "email"] },
+        { "id": "cta", "keywords": ["cta", "started"] }
+      ],
+      "expectedPins": [
+        { "elementId": "h1", "yMin": 0.12, "yMax": 0.5 },
+        { "elementId": "form", "yMin": 0.2, "yMax": 0.75 },
+        { "elementId": "cta", "yMin": 0.25, "yMax": 0.8 }
+      ]
+    },
+    {
+      "id": "afc-calera",
+      "url": "https://www.afcurgentcare.com/calera/",
+      "host": "afcurgentcare.com",
+      "sections": [
+        "Hero / above the fold",
+        "Forms / lead capture",
+        "Navigation",
+        "Footer"
+      ],
+      "bottleneckKeywords": ["hero", "headline", "value"],
+      "expectedIssues": [
+        { "id": "headline", "keywords": ["headline", "care"] },
+        { "id": "booking", "keywords": ["book", "appoint"] },
+        { "id": "insurance", "keywords": ["insurance"] }
+      ],
+      "expectedPins": [
+        { "elementId": "h1", "yMin": 0.08, "yMax": 0.45 },
+        { "elementId": "cta", "yMin": 0.15, "yMax": 0.65 }
+      ]
+    },
+    {
+      "id": "spiralyze",
+      "url": "https://www.spiralyze.com/",
+      "host": "spiralyze.com",
+      "sections": ["Hero / above the fold", "Social proof / testimonials", "Navigation"],
+      "bottleneckKeywords": ["cta", "proof", "headline"],
+      "expectedIssues": [
+        { "id": "hero", "keywords": ["hero", "headline"] },
+        { "id": "proof", "keywords": ["proof", "test"] }
+      ],
+      "expectedPins": [
+        { "elementId": "h1", "yMin": 0.08, "yMax": 0.5 },
+        { "elementId": "cta", "yMin": 0.2, "yMax": 0.7 }
+      ]
+    },
+    {
+      "id": "shopify",
+      "url": "https://www.shopify.com/",
+      "host": "shopify.com",
+      "sections": ["Hero / above the fold", "Pricing", "Navigation"],
+      "bottleneckKeywords": ["cta", "headline", "pricing"],
+      "expectedIssues": [
+        { "id": "hero", "keywords": ["headline"] },
+        { "id": "cta", "keywords": ["cta"] }
+      ],
+      "expectedPins": [{ "elementId": "h1", "yMin": 0.05, "yMax": 0.5 }]
+    },
+    {
+      "id": "hubspot",
+      "url": "https://www.hubspot.com/",
+      "host": "hubspot.com",
+      "sections": ["Hero / above the fold", "Forms / lead capture", "Navigation"],
+      "bottleneckKeywords": ["form", "cta", "headline"],
+      "expectedIssues": [
+        { "id": "form", "keywords": ["form"] },
+        { "id": "hero", "keywords": ["headline"] }
+      ],
+      "expectedPins": [
+        { "elementId": "h1", "yMin": 0.05, "yMax": 0.5 },
+        { "elementId": "form", "yMin": 0.1, "yMax": 0.8 }
+      ]
+    },
+    {
+      "id": "stripe",
+      "url": "https://stripe.com/",
+      "host": "stripe.com",
+      "sections": ["Hero / above the fold", "Navigation", "Footer"],
+      "bottleneckKeywords": ["headline", "cta"],
+      "expectedIssues": [
+        { "id": "hero", "keywords": ["headline"] },
+        { "id": "nav", "keywords": ["nav"] }
+      ],
+      "expectedPins": [{ "elementId": "h1", "yMin": 0.05, "yMax": 0.55 }]
+    },
+    {
+      "id": "notion",
+      "url": "https://www.notion.com/",
+      "host": "notion.com",
+      "sections": ["Hero / above the fold", "Navigation"],
+      "bottleneckKeywords": ["headline", "cta"],
+      "expectedIssues": [
+        { "id": "hero", "keywords": ["headline"] },
+        { "id": "cta", "keywords": ["cta"] }
+      ],
+      "expectedPins": [{ "elementId": "h1", "yMin": 0.05, "yMax": 0.5 }]
+    },
+    {
+      "id": "webflow",
+      "url": "https://webflow.com/",
+      "host": "webflow.com",
+      "sections": ["Hero / above the fold", "Social proof / testimonials", "Navigation"],
+      "bottleneckKeywords": ["headline", "cta"],
+      "expectedIssues": [
+        { "id": "hero", "keywords": ["headline"] },
+        { "id": "proof", "keywords": ["proof"] }
+      ],
+      "expectedPins": [{ "elementId": "cta", "yMin": 0.15, "yMax": 0.7 }]
+    },
+    {
+      "id": "intercom",
+      "url": "https://www.intercom.com/",
+      "host": "intercom.com",
+      "sections": ["Hero / above the fold", "Forms / lead capture", "Navigation"],
+      "bottleneckKeywords": ["headline", "form"],
+      "expectedIssues": [
+        { "id": "hero", "keywords": ["headline"] },
+        { "id": "form", "keywords": ["form"] }
+      ],
+      "expectedPins": [{ "elementId": "h1", "yMin": 0.05, "yMax": 0.5 }]
+    },
+    {
+      "id": "calendly",
+      "url": "https://calendly.com/",
+      "host": "calendly.com",
+      "sections": ["Hero / above the fold", "Forms / lead capture", "Navigation"],
+      "bottleneckKeywords": ["cta", "headline"],
+      "expectedIssues": [
+        { "id": "hero", "keywords": ["headline"] },
+        { "id": "cta", "keywords": ["cta", "book"] }
+      ],
+      "expectedPins": [{ "elementId": "cta", "yMin": 0.15, "yMax": 0.7 }]
+    },
+    {
+      "id": "mailchimp",
+      "url": "https://mailchimp.com/",
+      "host": "mailchimp.com",
+      "sections": ["Hero / above the fold", "Pricing", "Navigation"],
+      "bottleneckKeywords": ["headline", "pricing"],
+      "expectedIssues": [
+        { "id": "hero", "keywords": ["headline"] },
+        { "id": "pricing", "keywords": ["pric"] }
+      ],
+      "expectedPins": [{ "elementId": "h1", "yMin": 0.05, "yMax": 0.5 }]
+    },
+    {
+      "id": "salesforce",
+      "url": "https://www.salesforce.com/",
+      "host": "salesforce.com",
+      "sections": ["Hero / above the fold", "Navigation", "Footer"],
+      "bottleneckKeywords": ["headline", "nav", "cta"],
+      "expectedIssues": [
+        { "id": "hero", "keywords": ["headline"] },
+        { "id": "nav", "keywords": ["nav"] }
+      ],
+      "expectedPins": [{ "elementId": "nav", "yMin": 0, "yMax": 0.25 }]
+    }
+  ]
+}

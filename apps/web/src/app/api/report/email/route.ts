@@ -4,8 +4,21 @@ import { emailReportSchema } from "@cro/shared";
 import { verifyToken } from "@/lib/server/otp";
 import { sendReportEmail } from "@/lib/server/email";
 import { rateLimit, clientKey } from "@/lib/server/rate-limit";
+import { config } from "@/lib/config";
 
 export const runtime = "nodejs";
+
+function isOwnShareUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return (
+      /^https?:$/.test(u.protocol) &&
+      /^\/share\/[0-9a-f-]{36}$/i.test(u.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
 
 export async function POST(request: Request): Promise<NextResponse> {
   if (!rateLimit(`report:email:${clientKey(request)}`, 12, 10 * 60_000)) {
@@ -39,18 +52,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  // Only allow our own /share/<uuid> viewer links to be emailed out — this
-  // prevents the endpoint being used to send arbitrary URLs to the verified
-  // address.
-  try {
-    const u = new URL(parsed.data.shareUrl);
-    if (
-      !/^https?:$/.test(u.protocol) ||
-      !/^\/share\/[0-9a-f-]{36}$/i.test(u.pathname)
-    ) {
-      return NextResponse.json({ error: "Invalid report link" }, { status: 400 });
-    }
-  } catch {
+  // Optional live-report link — only our own /share/<uuid> viewer URLs.
+  const shareUrl = parsed.data.shareUrl;
+  if (shareUrl && !isOwnShareUrl(shareUrl)) {
     return NextResponse.json({ error: "Invalid report link" }, { status: 400 });
   }
 
@@ -58,7 +62,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     to: email,
     host: parsed.data.host,
     score: parsed.data.score,
-    shareUrl: parsed.data.shareUrl,
+    summary: parsed.data.summary,
+    primaryBottleneck: parsed.data.primaryBottleneck,
+    issues: parsed.data.issues,
+    bookCallUrl: config.bookCallUrl,
+    shareUrl,
   });
   if (!sent.ok) {
     return NextResponse.json(

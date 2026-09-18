@@ -292,3 +292,115 @@ export function groundedLiftLabel(category: string, fallback: string): string {
   if (lift) return `+${lift.low}-${lift.high}%`;
   return trimmed || "n/a";
 }
+
+// ---------------------------------------------------------------------------
+// Proven form-pattern briefs (structure only — used to drive mockup layouts)
+// ---------------------------------------------------------------------------
+// Subset of WIN_PATTERN_LIBRARY.forms that we can render as a visual "after".
+// Each audit generates two of these in a rotating pair — never the full list.
+
+export interface FormFixPattern {
+  name: string;
+  brief: string;
+}
+
+export const FORM_FIX_PATTERNS: FormFixPattern[] = [
+  {
+    name: "Form Over UI",
+    brief: `LAYOUT PATTERN — FORM OVER UI:
+- Keep the existing page / dashboard / app UI fully visible in the background (same chrome, photos, brand).
+- Float a compact WHITE form CARD over that UI (elevated overlay), not an inline split and not a full-page takeover.
+- The form card has a SMALL form title only — never a 3- or 4-line headline on the card itself.
+- Page H1, if shown outside the card, is maximum 2 lines. The overlay form is the conversion focus.`,
+  },
+  {
+    name: "Best Practice Baseline",
+    brief: `LAYOUT PATTERN — BEST PRACTICE BASELINE:
+- INLINE two-column conversion page (NOT a modal or overlay). Logo-only header.
+- Value-prop column: short 2-line H1 + exactly 3 benefit bullets. Optional customer-logo strip under the bullets.
+- Form column: SMALL form title (clearly smaller than the H1) + compact form with the original fields.
+- Clean light conversion page — the form is in the layout, not floating over a dashboard.`,
+  },
+  {
+    name: "Form Over UI With Copy",
+    brief: `LAYOUT PATTERN — FORM OVER UI WITH COPY:
+- Existing page UI stays visible (slightly dimmed is OK) in the background.
+- Overlay card is a TWO-column white panel: (1) 2-line H1 + exactly 3 checkmark bullets, (2) compact form with a SMALL form title.
+- Not a 4-line H1. The overlay is a card, not the entire viewport.`,
+  },
+  {
+    name: "Form on the Left",
+    brief: `LAYOUT PATTERN — FORM ON THE LEFT:
+- Two-column INLINE page (not a modal). The form column is on the LEFT.
+- Value-prop column on the RIGHT: 2-line H1 + exactly 3 bullets.
+- Small form title. Form is part of the page, not a floating overlay.`,
+  },
+  {
+    name: "Form Positioning",
+    brief: `LAYOUT PATTERN — FORM POSITIONING:
+- Two-column INLINE page (not a modal). Form column clearly separated from the value-prop column (form typically on the RIGHT).
+- Value-prop column: 2-line H1 + exactly 3 bullets. Small form title on the form. No overlay.`,
+  },
+  {
+    name: "Multi-step Forms",
+    brief: `LAYOUT PATTERN — MULTI-STEP FORMS:
+- Show a clear progress indicator ("Step 1 of N" or a stepper). Only ONE question group is visible (2–4 fields on this step).
+- Overlay card or inline split is fine, but it must read as step 1 of a multi-step form.
+- Primary button is Next / Continue (not a final Submit-only if more steps remain).
+- Still: 2-line page H1 if shown, exactly 3 bullets if copy is shown, small form title, logo-only nav.`,
+  },
+  {
+    name: "Longform Baseline",
+    brief: `LAYOUT PATTERN — LONGFORM BASELINE:
+- INLINE split like the baseline, but the form shows MORE fields (6–10 visible) in a compact column — not a giant wall of inputs.
+- Small form title. Opposite column: 2-line H1 + exactly 3 bullets. No overlay.`,
+  },
+  {
+    name: "Form Center-Aligned",
+    brief: `LAYOUT PATTERN — FORM CENTER-ALIGNED:
+- A centered form card on the page (not a left/right split). Page UI / background remains visible around it.
+- Small form title on the card. If copy appears, 2-line H1 + exactly 3 bullets sit above the card. Not a dimmed modal unless needed for contrast.`,
+  },
+  {
+    name: "Form in Modal",
+    brief: `LAYOUT PATTERN — FORM IN MODAL:
+- Page UI is DIMMED / blurred behind a centered modal dialog (close X, backdrop).
+- Modal contains the form (SMALL form title) and optionally a 2-line H1 + exactly 3 bullets inside the modal.
+- Looks like a real product modal, not a full-page form.`,
+  },
+  {
+    name: "Pre-filled Text Box",
+    brief: `LAYOUT PATTERN — PRE-FILLED TEXT BOX:
+- INLINE or overlay form is fine, but EVERY text input shows realistic SAMPLE values already typed in (name, work email, company, phone) — not empty placeholders.
+- Still: 2-line H1, exactly 3 bullets if copy is shown, small form title, logo-only nav.`,
+  },
+];
+
+export function formPatternStats(name: string): WinPattern | undefined {
+  return WIN_PATTERN_LIBRARY.forms.patterns.find((p) => p.name === name);
+}
+
+/** Stable 32-bit hash so the same seed always starts at the same catalog index. */
+export function hashSeed(seed: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** Next `count` form patterns from the rotating catalog, wrapping at the end. */
+export function pickRotatingFormPatterns(
+  seed: string,
+  count = 2
+): Array<FormFixPattern & Partial<WinPattern>> {
+  const list = FORM_FIX_PATTERNS;
+  if (list.length === 0) return [];
+  const start = hashSeed(seed) % list.length;
+  return Array.from({ length: Math.min(count, list.length) }, (_, i) => {
+    const pattern = list[(start + i) % list.length];
+    const stats = formPatternStats(pattern.name);
+    return { ...pattern, ...stats };
+  });
+}

@@ -6,6 +6,11 @@ import { AlertTriangle, Gauge, ExternalLink, Zap } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { config } from "@/lib/config";
 import { SEVERITY_META } from "@/lib/report-ui";
@@ -63,7 +68,7 @@ export function ConversionImpactPanel({
   const verdict = hasLcp ? lcpVerdict(lcpMs!) : null;
 
   return (
-    <Card className="relative overflow-hidden border-amber-500/30 p-6">
+    <Card className="relative h-full overflow-hidden border-amber-500/30 p-6">
       <div className="pointer-events-none absolute -left-16 -top-16 -z-10 h-44 w-44 rounded-full bg-amber-500/10 blur-3xl" />
 
       <div className="flex items-center gap-2">
@@ -75,12 +80,11 @@ export function ConversionImpactPanel({
         </h3>
       </div>
 
-      {/* Severity-weighted issue summary — driven by the real audit output. */}
-      <div className="mt-5 flex flex-wrap items-end gap-x-3 gap-y-1">
+      <div className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2">
         <span className="text-4xl font-bold tabular-nums leading-none">
           {total}
         </span>
-        <p className="text-sm leading-relaxed text-muted-foreground">
+        <p className="min-w-0 flex-1 text-sm leading-relaxed text-muted-foreground">
           conversion {total === 1 ? "leak" : "leaks"} identified
           {highImpact > 0 && (
             <>
@@ -94,71 +98,61 @@ export function ConversionImpactPanel({
           )}
           .
         </p>
+        {present.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {present.map((s) => {
+              const meta = SEVERITY_META[s];
+              return (
+                <span
+                  key={s}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold",
+                    meta.badge
+                  )}
+                >
+                  <span className={cn("h-1.5 w-1.5 rounded-full", meta.dot)} />
+                  {counts[s]} {meta.label}
+                </span>
+              );
+            })}
+          </div>
+        )}
       </div>
 
-      {present.length > 0 && (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {present.map((s) => {
-            const meta = SEVERITY_META[s];
-            return (
-              <span
-                key={s}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold",
-                  meta.badge
-                )}
-              >
-                <span className={cn("h-1.5 w-1.5 rounded-full", meta.dot)} />
-                {counts[s]} {meta.label}
-              </span>
-            );
-          })}
+      {hasLcp && verdict && (
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+          <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+            <Gauge className="h-4 w-4 shrink-0" />
+            <span>LCP</span>
+            <span className="text-xl font-bold tabular-nums text-foreground">
+              {(lcpMs! / 1000).toFixed(1)}s
+            </span>
+          </div>
+          <span
+            className={cn(
+              "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold",
+              TONE_CLASSES[verdict.tone]
+            )}
+          >
+            {verdict.label}
+          </span>
         </div>
       )}
 
-      {/* Measured page speed vs. Google's published research — no guesswork. */}
-      {hasLcp && verdict && (
-        <div className="mt-6 rounded-2xl border bg-muted/20 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <Gauge className="h-4 w-4" />
-              Largest Contentful Paint (measured)
-            </div>
-            <span
-              className={cn(
-                "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold",
-                TONE_CLASSES[verdict.tone]
-              )}
-            >
-              {verdict.label}
-            </span>
-          </div>
-          <p className="mt-2 text-3xl font-bold tabular-nums">
-            {(lcpMs! / 1000).toFixed(1)}
-            <span className="text-base font-medium text-muted-foreground">
-              {" "}
-              s to load main content
-            </span>
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Google Core Web Vitals rates LCP as Good at ≤ 2.5s and Poor above
-            4.0s.
-          </p>
-
-          <div className="mt-4 space-y-2 border-t pt-4 text-xs leading-relaxed text-muted-foreground">
-            <ResearchStat
-              stat="+8.4% retail conversions"
-              detail="from a 0.1-second improvement in mobile load time"
-              source="Deloitte & Google, “Milliseconds Make Millions,” 2020"
-              href="https://www.thinkwithgoogle.com/consumer-insights/consumer-trends/mobile-site-load-time-statistics/"
-            />
-            <ResearchStat
-              stat="53% of mobile visits abandoned"
-              detail="when a page takes longer than 3 seconds to load"
-              source="Google / Think with Google, 2017"
-              href="https://www.thinkwithgoogle.com/marketing-strategies/app-and-mobile/mobile-page-speed-new-industry-benchmarks/"
-            />
-          </div>
+      {hasLcp && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <ResearchStat
+            stat="+8.4% retail conversions"
+            detail="from a 0.1-second improvement in mobile load time"
+            source="Deloitte & Google, “Milliseconds Make Millions,” 2020"
+            href="https://www.thinkwithgoogle.com/consumer-insights/consumer-trends/mobile-site-load-time-statistics/"
+          />
+          <ResearchStat
+            stat="53% of mobile visits abandoned"
+            detail="when a page takes longer than 3 seconds to load"
+            source="Google / Think with Google, 2017"
+            href="https://www.thinkwithgoogle.com/marketing-strategies/app-and-mobile/mobile-page-speed-new-industry-benchmarks/"
+          />
         </div>
       )}
 
@@ -193,20 +187,22 @@ function ResearchStat({
   href: string;
 }) {
   return (
-    <div className="flex items-start gap-2">
-      <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-      <span>
-        <span className="font-semibold text-foreground">{stat}</span> {detail}.{" "}
+    <Tooltip>
+      <TooltipTrigger asChild>
         <a
           href={href}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-0.5 text-primary underline-offset-2 hover:underline"
+          className="inline-flex items-center gap-1 rounded-full border bg-background px-3 py-1 text-xs font-semibold text-foreground hover:border-primary/40"
         >
-          {source}
-          <ExternalLink className="h-3 w-3" />
+          {stat}
+          <ExternalLink className="h-3 w-3 text-muted-foreground" />
         </a>
-      </span>
-    </div>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs space-y-1 p-3">
+        <p>{detail}</p>
+        <p className="text-muted-foreground">{source}</p>
+      </TooltipContent>
+    </Tooltip>
   );
 }

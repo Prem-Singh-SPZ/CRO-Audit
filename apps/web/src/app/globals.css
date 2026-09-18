@@ -50,27 +50,27 @@
   }
 
   .dark {
-    /* Coframe-style near-black navy base with brighter amber/blue accents. */
-    --background: 217 74% 4%;
+    /* Spiralyze navy — lifted off near-black so cards read as surfaces. */
+    --background: 217 64% 9%;
     --foreground: 0 0% 98%;
 
-    --card: 216 52% 8%;
+    --card: 216 48% 13%;
     --card-foreground: 0 0% 98%;
 
-    --popover: 216 52% 8%;
+    --popover: 216 48% 13%;
     --popover-foreground: 0 0% 98%;
 
     --primary: 38 96% 60%;
     --primary-foreground: 216 100% 9%;
 
-    --secondary: 216 40% 14%;
+    --secondary: 216 36% 18%;
     --secondary-foreground: 0 0% 98%;
 
-    --muted: 216 38% 12%;
+    --muted: 216 34% 16%;
     /* Brightened so secondary text stays easily readable on deep navy. */
     --muted-foreground: 214 30% 80%;
 
-    --accent: 216 46% 15%;
+    --accent: 216 38% 18%;
     --accent-foreground: 38 96% 70%;
 
     --destructive: 0 72% 55%;
@@ -85,9 +85,9 @@
     --brand: 224 96% 66%;
     --brand-foreground: 0 0% 100%;
 
-    --border: 216 42% 15%;
+    --border: 216 32% 22%;
     /* Lighter than the border so fields stand out against the dark card. */
-    --input: 216 38% 26%;
+    --input: 216 32% 28%;
     --ring: 38 96% 60%;
   }
 }
@@ -133,10 +133,10 @@
 
 @layer components {
   .glass {
-    @apply border border-white/10 bg-white/70 backdrop-blur-xl dark:bg-white/[0.03];
+    @apply border bg-white/90 dark:bg-card/90;
   }
   .glass-strong {
-    @apply border border-black/5 bg-white/80 backdrop-blur-2xl dark:border-white/10 dark:bg-white/[0.05];
+    @apply border bg-card;
   }
   .text-gradient {
     @apply bg-gradient-to-br from-foreground via-foreground to-foreground/50 bg-clip-text text-transparent;

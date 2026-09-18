@@ -1,0 +1,45 @@
+{
+  "overallScore": 70,
+  "primaryBottleneck": "The page could use more color contrast.",
+  "categoryScores": {
+    "hero": 70,
+    "trust": 70,
+    "cta": 70,
+    "copy": 70,
+    "design": 70,
+    "forms": 70,
+    "accessibility": 70,
+    "performance": 70,
+    "mobile": 70,
+    "psychology": 70,
+    "seo": 70,
+    "navigation": 70
+  },
+  "summary": "A generic SaaS landing page with room to improve contrast.",
+  "strengths": ["Looks modern"],
+  "weaknesses": ["Contrast"],
+  "issues": [
+    {
+      "category": "design",
+      "title": "Low contrast on icons",
+      "description": "Some icons may be hard to see for a subset of visitors.",
+      "whyItMatters": "Accessibility.",
+      "severity": "LOW",
+      "confidence": 40,
+      "businessImpact": "",
+      "suggestedFix": "Increase contrast.",
+      "estimatedConversionImpact": "+1%",
+      "annotation": {
+        "device": "desktop",
+        "x": 0.5,
+        "y": 0.92,
+        "width": 0.1,
+        "height": 0.05
+      }
+    }
+  ],
+  "recommendations": [],
+  "priority": "low",
+  "confidence": 40,
+  "estimatedImpact": "+1%"
+}

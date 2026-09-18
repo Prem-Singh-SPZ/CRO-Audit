@@ -28,7 +28,7 @@ export function Stats() {
           </h2>
         </Reveal>
 
-        <div className="mt-12 grid grid-cols-2 gap-6 lg:grid-cols-4">
+        <div className="mt-10 grid grid-cols-2 gap-6 lg:grid-cols-4">
           {STATS.map((s, i) => (
             <Reveal key={s.label} delay={i}>
               <div className="rounded-2xl border bg-card p-6 text-center shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-primary/30 hover:shadow-lg hover:shadow-primary/10">

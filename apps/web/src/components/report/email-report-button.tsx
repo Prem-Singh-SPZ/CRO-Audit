@@ -5,12 +5,11 @@ import { Check, Loader2, Mail } from "lucide-react";
 
 import type { ReportResponse } from "@cro/shared";
 import { Button } from "@/components/ui/button";
-import { safeHost } from "@/lib/utils";
-import { uploadReportForShare } from "@/lib/verification";
+import { emailReportPayload } from "@/lib/email-report-payload";
 import { useReportGate } from "./report-gate";
 
 export function EmailReportButton({ data }: { data: ReportResponse }) {
-  const { verified, token, email, openGate } = useReportGate();
+  const { verified, token, email, openGate, resetVerification } = useReportGate();
   const [status, setStatus] = React.useState<"idle" | "sending" | "sent">("idle");
   const [error, setError] = React.useState<string | null>(null);
 
@@ -23,18 +22,17 @@ export function EmailReportButton({ data }: { data: ReportResponse }) {
     setStatus("sending");
     setError(null);
     try {
-      const shareUrl = await uploadReportForShare(data);
       const res = await fetch("/api/report/email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          token,
-          shareUrl,
-          host: safeHost(data.scan.url, "your site"),
-          score: data.report.overallScore,
-        }),
+        body: JSON.stringify(emailReportPayload(data, token)),
       });
       const body = await res.json().catch(() => null);
+      if (res.status === 401) {
+        resetVerification();
+        setStatus("idle");
+        return;
+      }
       if (!res.ok) throw new Error(body?.error ?? "Couldn't send the email.");
       setStatus("sent");
     } catch (err) {

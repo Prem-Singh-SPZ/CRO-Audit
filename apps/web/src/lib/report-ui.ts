@@ -1,8 +1,9 @@
-import type {
-  SeverityLevel,
-  ComplexityLevel,
-  DiyRiskLevel,
-  CategoryScores,
+import {
+  estimateRealisticLift,
+  type SeverityLevel,
+  type ComplexityLevel,
+  type DiyRiskLevel,
+  type CategoryScores,
 } from "@cro/shared";
 
 // Anchor for the sticky booking panel + a smooth-scroll helper reused by the
@@ -120,6 +121,22 @@ export const SCORE_GROUPS: {
   },
 ];
 
+/** First sentence only — keeps long generated summaries from dominating the UI. */
+export function firstSentence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  // Require a space or end after the stop so "example.com" is not a sentence.
+  const match = trimmed.match(/^.+?(?:[.!?](?=\s|$)|\n|$)/);
+  return (match?.[0] ?? trimmed).trim();
+}
+
+/** Clamp a caption to a handful of words for on-screenshot labels. */
+export function shortCaption(text: string, maxWords = 8): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return words.join(" ");
+  return `${words.slice(0, maxWords).join(" ")}…`;
+}
+
 export function gradeFor(score: number): "Good" | "Fair" | "Poor" {
   if (score >= 70) return "Good";
   if (score >= 45) return "Fair";
@@ -137,4 +154,11 @@ export function groupCategoryScores(
       : 0;
     return { key: group.key, label: group.label, score: avg, grade: gradeFor(avg) };
   });
+}
+
+/** Win-rate + sample size from the Spiralyze library, if the category maps. */
+export function liftEvidence(category: string): string | null {
+  const lift = estimateRealisticLift(category);
+  if (!lift) return null;
+  return `${lift.winRate}% win rate · ${lift.sampleSize.toLocaleString()} tests`;
 }

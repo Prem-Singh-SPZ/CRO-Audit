@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Search, Sparkles, SlidersHorizontal } from "lucide-react";
+import { ArrowRight, Search, SlidersHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -42,8 +42,8 @@ export function UrlAnalyzerForm({ className }: { className?: string }) {
         }}
         className="group relative"
       >
-        <div className="glass-strong flex items-center gap-2 rounded-2xl border-2 border-primary/50 p-2 shadow-xl shadow-primary/10 transition-all focus-within:border-primary focus-within:ring-4 focus-within:ring-primary/20">
-          <div className="flex flex-1 items-center gap-3 pl-3">
+        <div className="flex flex-col gap-2 rounded-2xl border bg-card p-2 transition-colors focus-within:border-primary sm:flex-row sm:items-center sm:rounded-full sm:p-1.5 sm:pl-4">
+          <div className="flex min-w-0 flex-1 items-center gap-2 px-2 sm:px-0">
             <Search className="h-5 w-5 shrink-0 text-muted-foreground" />
             <input
               type="text"
@@ -53,24 +53,28 @@ export function UrlAnalyzerForm({ className }: { className?: string }) {
               onChange={(e) => setUrl(e.target.value)}
               placeholder="Enter your website URL..."
               aria-label="Website URL"
-              className="h-12 w-full bg-transparent text-base outline-none placeholder:text-muted-foreground"
+              className="h-12 w-full min-w-0 bg-transparent text-base outline-none placeholder:text-muted-foreground"
             />
           </div>
-          <Button type="submit" variant="gradient" size="lg" className="shrink-0">
-            <Sparkles className="h-4 w-4" />
+          <Button
+            type="submit"
+            variant="gradient"
+            size="lg"
+            className="w-full shrink-0 sm:w-auto"
+          >
             Analyze
             <ArrowRight className="h-4 w-4" />
           </Button>
         </div>
 
-        <div className="mt-3" id="audit-context-panel">
-          <p className="inline-flex items-center gap-1.5 text-sm font-medium text-primary">
-            <SlidersHorizontal className="h-3.5 w-3.5" />
+        <div className="mt-4" id="audit-context-panel">
+          <p className="inline-flex flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5 text-sm font-medium text-primary lg:justify-start">
+            <SlidersHorizontal className="h-3.5 w-3.5 shrink-0" />
             Add context for a sharper audit
-            <span className="text-xs text-primary/70">(optional)</span>
+            <span className="text-xs font-normal text-primary/70">(optional)</span>
           </p>
 
-          <div className="mt-3 grid gap-3 rounded-2xl border bg-background/50 p-4 text-left sm:grid-cols-3">
+          <div className="mt-3 grid gap-3 text-left sm:grid-cols-3">
             <ContextField
               label="Target audience"
               placeholder="e.g. B2B SaaS founders"
@@ -115,14 +119,14 @@ function ContextField({
 }) {
   return (
     <label className="flex flex-col gap-1.5">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <span className="text-sm text-muted-foreground">{label}</span>
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         maxLength={300}
-        className="h-10 w-full rounded-xl border-2 border-primary/50 bg-background px-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
+        className="h-11 w-full rounded-full border bg-card px-4 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-primary"
       />
     </label>
   );

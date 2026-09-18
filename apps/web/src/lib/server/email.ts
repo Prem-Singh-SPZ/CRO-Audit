@@ -76,20 +76,95 @@ export function sendOtpEmail(to: string, code: string): Promise<SendResult> {
   return send({ to, subject: `Your CRO Audit code: ${code}`, html });
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+const SEVERITY_COLOR: Record<string, string> = {
+  CRITICAL: "#dc2626",
+  HIGH: "#ea580c",
+  MEDIUM: "#d97706",
+  LOW: "#2563eb",
+  INFO: "#64748b",
+};
+
 export function sendReportEmail(args: {
   to: string;
   host: string;
   score: number;
-  shareUrl: string;
+  summary: string;
+  primaryBottleneck?: string;
+  issues: {
+    title: string;
+    severity: string;
+    category: string;
+    description: string;
+  }[];
+  bookCallUrl: string;
+  shareUrl?: string;
 }): Promise<SendResult> {
+  const host = escapeHtml(args.host);
+  const summary = escapeHtml(args.summary);
+  const bottleneck = args.primaryBottleneck
+    ? escapeHtml(args.primaryBottleneck)
+    : "";
+  const bookCallUrl = escapeHtml(args.bookCallUrl);
+  const shareUrl = args.shareUrl ? escapeHtml(args.shareUrl) : "";
+
+  const issueBlocks = args.issues
+    .map((issue) => {
+      const color = SEVERITY_COLOR[issue.severity] ?? "#64748b";
+      return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e6ebf2;border-radius:12px;margin:0 0 12px">
+        <tr>
+          <td style="padding:14px 16px">
+            <div style="font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:${color};margin-bottom:6px">${escapeHtml(issue.severity)} · ${escapeHtml(issue.category)}</div>
+            <div style="font-size:15px;font-weight:650;margin-bottom:6px">${escapeHtml(issue.title)}</div>
+            <div style="font-size:13px;line-height:1.55;color:#3d4f66">${escapeHtml(issue.description)}</div>
+          </td>
+        </tr>
+      </table>`;
+    })
+    .join("");
+
   const html = shell(`
-    <p style="font-size:15px;line-height:1.6">Your CRO report for <strong>${args.host}</strong> is ready.</p>
-    <div style="border:1px solid #e6ebf2;border-radius:12px;padding:20px;margin:20px 0">
-      <div style="font-size:13px;color:#7a8aa0">Overall conversion score</div>
-      <div style="font-size:40px;font-weight:700;color:#0b1b33">${args.score}<span style="font-size:16px;color:#7a8aa0">/100</span></div>
-    </div>
-    <a href="${args.shareUrl}" style="display:inline-block;background:linear-gradient(90deg,#f5a623,#f59e0b);color:#0b1b33;font-weight:600;text-decoration:none;padding:12px 22px;border-radius:9999px">View your full report</a>
-    <p style="font-size:13px;color:#7a8aa0;margin-top:16px">Or copy this link: <br />${args.shareUrl}</p>
+    <p style="font-size:15px;line-height:1.6">Your CRO report for <strong>${host}</strong> is ready.</p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e6ebf2;border-radius:12px;margin:20px 0">
+      <tr>
+        <td style="padding:20px">
+          <div style="font-size:13px;color:#7a8aa0">Overall conversion score</div>
+          <div style="font-size:40px;font-weight:700;color:#0b1b33">${args.score}<span style="font-size:16px;color:#7a8aa0">/100</span></div>
+        </td>
+      </tr>
+    </table>
+    <p style="font-size:15px;line-height:1.6">${summary}</p>
+    ${
+      bottleneck
+        ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fff6e6;border:1px solid #f5c368;border-radius:12px;margin:20px 0">
+      <tr>
+        <td style="padding:16px">
+          <div style="font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#9a6b12;margin-bottom:6px">Primary bottleneck</div>
+          <div style="font-size:15px;line-height:1.55">${bottleneck}</div>
+        </td>
+      </tr>
+    </table>`
+        : ""
+    }
+    ${
+      issueBlocks
+        ? `<div style="font-size:13px;font-weight:700;margin:24px 0 10px;color:#0b1b33">Top issues</div>${issueBlocks}`
+        : ""
+    }
+    <a href="${bookCallUrl}" style="display:inline-block;background:linear-gradient(90deg,#f5a623,#f59e0b);color:#0b1b33;font-weight:600;text-decoration:none;padding:12px 22px;border-radius:9999px;margin-top:8px">Book a call to fix this page</a>
+    ${
+      shareUrl
+        ? `<p style="font-size:13px;color:#7a8aa0;margin-top:16px">Open the interactive report: <br /><a href="${shareUrl}" style="color:#0b1b33">${shareUrl}</a></p>`
+        : ""
+    }
   `);
   return send({
     to: args.to,

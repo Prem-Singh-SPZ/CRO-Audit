@@ -10,6 +10,7 @@ import {
   FileJson,
   Loader2,
   Mail,
+  MoreHorizontal,
   Share2,
   Zap,
 } from "lucide-react";
@@ -18,21 +19,28 @@ import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { scrollToBooking } from "@/lib/report-ui";
-import { stripMockupSeed } from "@/lib/report-store";
-import { uploadReportForShare } from "@/lib/verification";
+import { slimForShare } from "@/lib/report-store";
+import { config } from "@/lib/config";
+import { emailReportPayload } from "@/lib/email-report-payload";
 import { safeHost } from "@/lib/utils";
 import type { ReportResponse } from "@cro/shared";
 import { useReportGate } from "./report-gate";
 
 export function ReportHeader({ data }: { data: ReportResponse }) {
-  const { verified, token, email, openGate } = useReportGate();
+  const { verified, token, email, openGate, resetVerification } = useReportGate();
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [sharing, setSharing] = React.useState(false);
   const [shareUrl, setShareUrl] = React.useState<string | null>(null);
@@ -67,7 +75,7 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
       const id = crypto.randomUUID();
       // Drop the one-time mockup seed; the generated image already lives in
       // `mockups[]`, so this keeps the stored payload smaller.
-      const payload = JSON.stringify(stripMockupSeed(data));
+      const payload = JSON.stringify(slimForShare(data));
       await upload(`reports/${id}.json`, payload, {
         access: "public",
         handleUploadUrl: "/api/share/upload",
@@ -105,22 +113,17 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
     setEmailStatus("sending");
     setEmailError(null);
     try {
-      let url = shareUrl;
-      if (!url) {
-        url = await uploadReportForShare(data);
-        setShareUrl(url);
-      }
       const res = await fetch("/api/report/email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          token,
-          shareUrl: url,
-          host: safeHost(data.scan.url, "your site"),
-          score: data.report.overallScore,
-        }),
+        body: JSON.stringify(emailReportPayload(data, token, shareUrl)),
       });
       const body = await res.json().catch(() => null);
+      if (res.status === 401) {
+        resetVerification();
+        setEmailStatus("idle");
+        return;
+      }
       if (!res.ok) throw new Error(body?.error ?? "Couldn't send the email.");
       setEmailStatus("sent");
     } catch (err) {
@@ -131,14 +134,14 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
 
   return (
     <header className="sticky top-0 z-30 border-b bg-background/80 backdrop-blur-xl print:hidden">
-      <div className="container flex h-16 items-center justify-between">
+      <div className="container flex h-16 items-center justify-between gap-2">
         <Logo />
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <Button
             variant="ghost"
             size="sm"
             onClick={shareReport}
-            className="hidden sm:inline-flex"
+            className="hidden lg:inline-flex"
           >
             <Share2 className="h-4 w-4" />
             Share
@@ -147,7 +150,7 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
             variant="ghost"
             size="sm"
             onClick={downloadJson}
-            className="hidden sm:inline-flex"
+            className="hidden lg:inline-flex"
           >
             <FileJson className="h-4 w-4" />
             JSON
@@ -156,7 +159,7 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
             variant="ghost"
             size="sm"
             onClick={() => window.print()}
-            className="hidden sm:inline-flex"
+            className="hidden lg:inline-flex"
           >
             <Download className="h-4 w-4" />
             PDF
@@ -164,19 +167,54 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
           {/* Demoted to a low-contrast text link — keep focus on fixing THIS page */}
           <Link
             href="/#analyze"
-            className="hidden text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline sm:inline"
+            className="hidden text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline lg:inline"
           >
             Analyze another
           </Link>
-          {/* Primary conversion action: high-contrast amber, scrolls to booking */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="lg:hidden"
+                aria-label="More report actions"
+              >
+                <MoreHorizontal className="h-5 w-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem onClick={shareReport}>
+                <Share2 className="h-4 w-4" />
+                Share
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={downloadJson}>
+                <FileJson className="h-4 w-4" />
+                Download JSON
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => window.print()}>
+                <Download className="h-4 w-4" />
+                Download PDF
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild>
+                <Link href="/#analyze">Analyze another</Link>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
-            type="button"
+            asChild
             size="sm"
-            onClick={scrollToBooking}
-            className="bg-amber-500 font-semibold text-white shadow-sm shadow-amber-500/25 hover:bg-amber-600 hover:shadow-amber-500/40"
+            className="bg-amber-500 px-3 font-semibold text-white shadow-sm shadow-amber-500/25 hover:bg-amber-600 hover:shadow-amber-500/40 sm:px-4"
           >
-            <Zap className="h-4 w-4" />
-            Fix My Page
+            <Link
+              href={config.bookCallUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Zap className="h-4 w-4" />
+              <span className="min-[400px]:hidden">Fix</span>
+              <span className="hidden min-[400px]:inline">Fix My Page</span>
+            </Link>
           </Button>
           <ThemeToggle />
         </div>
@@ -188,8 +226,9 @@ export function ReportHeader({ data }: { data: ReportResponse }) {
             <DialogTitle>Share this report</DialogTitle>
             <DialogDescription>
               Anyone with this link can view the full read-only report — no login
-              required. Copy the link or email it to your verified address. Links
-              stay active for about 30 days.
+              required. Copy the link to share it. Emailing sends a summary of
+              the report to your verified address. Links stay active for about
+              30 days.
             </DialogDescription>
           </DialogHeader>
 

@@ -9,7 +9,17 @@ import { SEVERITY_META } from "@/lib/report-ui";
 import { IssueCard } from "./issue-card";
 import { cn } from "@/lib/utils";
 
-export function IssuesExplorer({ issues }: { issues: IssueDto[] }) {
+export function IssuesExplorer({
+  issues,
+  selectedIssueId = null,
+  onSelectIssue,
+  pageUrl,
+}: {
+  issues: IssueDto[];
+  selectedIssueId?: string | null;
+  onSelectIssue?: (id: string) => void;
+  pageUrl?: string;
+}) {
   const [query, setQuery] = React.useState("");
   const [severity, setSeverity] = React.useState<SeverityLevel | "ALL">("ALL");
   const [category, setCategory] = React.useState<string>("ALL");
@@ -18,6 +28,13 @@ export function IssuesExplorer({ issues }: { issues: IssueDto[] }) {
     () => ["ALL", ...Array.from(new Set(issues.map((i) => i.category)))],
     [issues]
   );
+
+  React.useEffect(() => {
+    if (!selectedIssueId) return;
+    document
+      .getElementById(`issue-${selectedIssueId}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [selectedIssueId]);
 
   const filtered = React.useMemo(() => {
     return issues
@@ -90,7 +107,13 @@ export function IssuesExplorer({ issues }: { issues: IssueDto[] }) {
 
       <div className="space-y-3">
         {filtered.map((issue) => (
-          <IssueCard key={issue.id} issue={issue} />
+          <IssueCard
+            key={issue.id}
+            issue={issue}
+            selected={issue.id === selectedIssueId}
+            onSelect={onSelectIssue}
+            pageUrl={pageUrl}
+          />
         ))}
         {filtered.length === 0 && (
           <div className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">

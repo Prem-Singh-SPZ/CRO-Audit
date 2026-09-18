@@ -11,13 +11,34 @@ import type { ReportResponse } from "@cro/shared";
 
 const TOKEN_KEY = "cro:verified-token";
 const EMAIL_KEY = "cro:verified-email";
+// Must match apps/web/src/lib/server/otp.ts TOKEN_TTL_MS.
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function isTokenExpired(token: string): boolean {
+  try {
+    const body = token.split(".")[0];
+    if (!body) return true;
+    const pad = body.length % 4 === 0 ? "" : "=".repeat(4 - (body.length % 4));
+    const json = atob(body.replace(/-/g, "+").replace(/_/g, "/") + pad);
+    const payload = JSON.parse(json) as { iat?: number };
+    if (typeof payload.iat !== "number") return true;
+    return Date.now() - payload.iat > TOKEN_TTL_MS;
+  } catch {
+    return true;
+  }
+}
 
 export function getVerification(): { token: string; email: string } | null {
   if (typeof window === "undefined") return null;
   try {
     const token = window.localStorage.getItem(TOKEN_KEY);
     const email = window.localStorage.getItem(EMAIL_KEY);
-    if (token && email) return { token, email };
+    if (!token || !email) return null;
+    if (isTokenExpired(token)) {
+      clearVerification();
+      return null;
+    }
+    return { token, email };
   } catch {
     // localStorage unavailable (private mode) — treat as unverified.
   }
@@ -42,10 +63,7 @@ export function clearVerification() {
   }
 }
 
-/**
- * Uploads the current report to Blob (reusing the share pipeline) and returns
- * the on-domain `/share/<id>` viewer link that we can email to the user.
- */
+/** Uploads the current report to Blob and returns the `/share/<id>` viewer link. */
 export async function uploadReportForShare(
   data: ReportResponse
 ): Promise<string> {

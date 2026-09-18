@@ -33,6 +33,32 @@ export function stripMockupSeed(data: ReportResponse): ReportResponse {
   return { ...data, mockupSeed: null };
 }
 
+/**
+ * Share payload: one desktop stitch is enough for the shared viewer. Drop the
+ * mockup seed and mockup data URIs so the Blob stay small.
+ */
+export function slimForShare(data: ReportResponse): ReportResponse {
+  const desktop =
+    data.screenshots.find((s) => s.device === "desktop") ?? data.screenshots[0];
+  return {
+    ...stripMockupSeed(data),
+    screenshots: desktop ? [desktop] : [],
+    mockups: data.mockups.map((m) => ({ ...m, url: "" })),
+  };
+}
+
+/** Older stored/shared reports omit annotation box size — default so callouts still draw. */
+export function normalizeReport(data: ReportResponse): ReportResponse {
+  return {
+    ...data,
+    issues: data.issues.map((i) => ({
+      ...i,
+      annotationW: i.annotationW ?? null,
+      annotationH: i.annotationH ?? null,
+    })),
+  };
+}
+
 function trySet(data: ReportResponse): boolean {
   try {
     sessionStorage.setItem(REPORT_STORAGE_KEY, JSON.stringify(data));

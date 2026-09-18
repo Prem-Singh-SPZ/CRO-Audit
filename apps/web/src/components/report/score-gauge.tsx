@@ -55,7 +55,7 @@ export function ScoreGauge({
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
-          className="text-4xl font-semibold tabular-nums"
+          className={`${size < 140 ? "text-2xl" : "text-4xl"} font-semibold tabular-nums`}
           style={{ color }}
         >
           {score}

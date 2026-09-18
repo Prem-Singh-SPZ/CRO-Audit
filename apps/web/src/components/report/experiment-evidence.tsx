@@ -52,7 +52,7 @@ export function ExperimentEvidence({
   const totalTests = bucket.patterns.reduce((sum, p) => sum + p.sampleSize, 0);
 
   return (
-    <div className="rounded-2xl border bg-card p-5">
+    <div className="flex h-full flex-col rounded-2xl border bg-card p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-2.5">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">

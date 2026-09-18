@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SCORE_CATEGORIES, SEVERITIES, DEVICES } from "./constants";
+import { LANDMARK_IDS } from "./page-context";
 import { isDisposableEmail } from "./disposable-email-domains";
 
 // ---------------------------------------------------------------------------
@@ -32,6 +33,11 @@ export const scanRequestSchema = z.object({
   targetAudience: optionalContextField,
   coreProduct: optionalContextField,
   primaryTrafficSource: optionalContextField,
+  competitorUrl: z.preprocess((v) => {
+    if (typeof v !== "string") return undefined;
+    const trimmed = v.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }, optionalContextField),
 });
 
 export type ScanRequest = z.infer<typeof scanRequestSchema>;
@@ -63,6 +69,14 @@ export const annotationSchema = z.object({
   device: z.enum(DEVICES),
   x: z.number().min(0).max(1),
   y: z.number().min(0).max(1),
+  width: z.number().min(0).max(1).optional(),
+  height: z.number().min(0).max(1).optional(),
+  // 1-based viewport band the model annotated. Stripped after the API remaps
+  // x/y into full-stitch coordinates; kept optional so leftover values parse.
+  band: z.number().int().min(1).optional(),
+  // Measured landmark on the live page. When set, the API overwrites x/y/w/h
+  // from Chromium so pins sit on the real element, not the model's guess.
+  element: z.enum(LANDMARK_IDS).optional(),
 });
 
 export type Annotation = z.infer<typeof annotationSchema>;
@@ -142,14 +156,28 @@ export const otpVerifySchema = z.object({
   url: z.string().max(2048).optional().catch(undefined),
   score: z.number().int().min(0).max(100).optional().catch(undefined),
   device: z.enum(["desktop", "mobile"]).optional().catch(undefined),
+  primaryBottleneck: z.string().max(400).optional().catch(undefined),
+  topIssueTitle: z.string().max(200).optional().catch(undefined),
 });
 export type OtpVerifyInput = z.infer<typeof otpVerifySchema>;
 
+export const emailReportIssueSchema = z.object({
+  title: z.string().min(1).max(200),
+  severity: z.enum(SEVERITIES),
+  category: z.string().min(1).max(80),
+  description: z.string().min(1).max(400),
+});
+
 export const emailReportSchema = z.object({
   token: z.string().min(1),
-  shareUrl: z.string().url(),
   host: z.string().min(1).max(255),
   score: z.number().int().min(0).max(100),
+  summary: z.string().min(1).max(1200),
+  primaryBottleneck: z.string().max(400).optional(),
+  issues: z.array(emailReportIssueSchema).max(5),
+  // Optional live-report link. Only included when Share already created one;
+  // email never uploads to Blob just to mint this.
+  shareUrl: z.string().url().optional(),
 });
 export type EmailReportInput = z.infer<typeof emailReportSchema>;
 

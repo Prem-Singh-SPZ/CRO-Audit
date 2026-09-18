@@ -47,14 +47,14 @@ export function Navbar() {
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.4 }}
       className={cn(
-        "fixed inset-x-0 top-0 z-40 transition-all duration-300",
+        "fixed inset-x-0 top-0 z-40 transition-all duration-300 print:hidden",
         scrolled ? "py-2" : "py-4"
       )}
     >
       <div className="container">
         <div
           className={cn(
-            "flex h-14 items-center justify-between rounded-2xl px-4 transition-all duration-300",
+            "flex h-14 items-center justify-between gap-2 rounded-2xl px-3 transition-all duration-300 sm:px-4",
             scrolled
               ? "glass-strong shadow-lg shadow-black/5"
               : "border border-transparent"
@@ -62,7 +62,7 @@ export function Navbar() {
         >
           <Logo />
 
-          <nav className="hidden items-center gap-1 md:flex">
+          <nav className="hidden items-center gap-1 lg:flex">
             {NAV_LINKS.map((link) => (
               <Link
                 key={link.href}
@@ -75,26 +75,26 @@ export function Navbar() {
             ))}
           </nav>
 
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
             <ThemeToggle />
             {/* Secondary lead-gen CTA. Kept as an outline so it doesn't compete
                 with the hero's primary "Analyze" action — the one thing we want
                 first-time visitors to do above the fold. */}
-            <Button asChild size="sm" variant="outline" className="hidden md:inline-flex">
+            <Button asChild size="sm" variant="outline" className="hidden lg:inline-flex">
               <Link href={config.bookCallUrl} target="_blank">
-                Get a demo
+                Fix My Page
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </Button>
 
-            {/* Mobile menu toggle — the links are hidden below md. */}
+            {/* Tablet + phone menu — desktop links need ~1024px to sit beside the logo. */}
             <button
               type="button"
               onClick={() => setMenuOpen((v) => !v)}
               aria-expanded={menuOpen}
               aria-controls="mobile-nav"
               aria-label={menuOpen ? "Close menu" : "Open menu"}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:text-foreground md:hidden"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border text-muted-foreground transition-colors hover:text-foreground lg:hidden"
             >
               {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
@@ -110,14 +110,14 @@ export function Navbar() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.2 }}
-              className="glass-strong mt-2 flex flex-col gap-1 rounded-2xl p-3 shadow-lg md:hidden"
+              className="mt-2 flex flex-col gap-1 rounded-2xl border bg-card p-3 shadow-2xl ring-1 ring-white/10 lg:hidden"
             >
               {NAV_LINKS.map((link) => (
                 <Link
                   key={link.href}
                   href={link.href}
                   onClick={() => setMenuOpen(false)}
-                  className="rounded-xl px-3.5 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className="rounded-xl px-3.5 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-accent"
                 >
                   {link.label}
                 </Link>
@@ -128,7 +128,7 @@ export function Navbar() {
                   target="_blank"
                   onClick={() => setMenuOpen(false)}
                 >
-                  Get a demo
+                  Fix My Page
                   <ArrowRight className="h-4 w-4" />
                 </Link>
               </Button>

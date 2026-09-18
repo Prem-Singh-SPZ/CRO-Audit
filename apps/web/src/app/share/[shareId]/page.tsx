@@ -7,6 +7,7 @@ import { Loader2, SearchX } from "lucide-react";
 import { ReportView } from "@/components/report/report-view";
 import { Button } from "@/components/ui/button";
 import type { ReportResponse } from "@cro/shared";
+import { normalizeReport } from "@/lib/report-store";
 
 type LoadState = "loading" | "ready" | "notfound" | "error";
 
@@ -43,7 +44,7 @@ export default function SharedReportPage({
           setState("error");
           return;
         }
-        const report = (await reportRes.json()) as ReportResponse;
+        const report = normalizeReport((await reportRes.json()) as ReportResponse);
         setData(report);
         setState("ready");
       } catch (err) {
@@ -90,6 +91,6 @@ export default function SharedReportPage({
   // The generated mockup is already embedded in the shared payload, so the
   // deferred client-side mockup fetch (report page) is intentionally not run.
   return (
-    <ReportView data={data} readOnly mockupPending={false} mockupError={false} />
+    <ReportView data={data} readOnly mockupPending={false} />
   );
 }

@@ -2,6 +2,9 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { config } from "@/lib/config";
 
+const compactLogoText =
+  config.logoText.replace(/\s+by\s+.+$/i, "").trim() || config.logoText;
+
 export function Logo({
   className,
   href = "/",
@@ -12,10 +15,10 @@ export function Logo({
   return (
     <Link
       href={href}
-      className={cn("group flex items-center gap-2.5", className)}
+      className={cn("group flex min-w-0 shrink-0 items-center gap-2.5", className)}
       aria-label={`${config.logoText} home`}
     >
-      <span className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-amber-500 text-primary-foreground shadow-lg shadow-primary/25 transition-transform group-hover:scale-105">
+      <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-amber-500 text-primary-foreground shadow-lg shadow-primary/25 transition-transform group-hover:scale-105">
         <svg
           viewBox="0 0 24 24"
           fill="none"
@@ -32,8 +35,9 @@ export function Logo({
           <circle cx="20" cy="8" r="2" fill="currentColor" />
         </svg>
       </span>
-      <span className="text-[15px] font-semibold tracking-tight">
-        {config.logoText}
+      <span className="whitespace-nowrap text-[15px] font-semibold tracking-tight">
+        <span className="lg:hidden">{compactLogoText}</span>
+        <span className="hidden lg:inline">{config.logoText}</span>
       </span>
     </Link>
   );

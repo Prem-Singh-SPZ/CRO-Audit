@@ -37,6 +37,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     url: raw?.url,
     score: raw?.score,
     device: raw?.device,
+    primaryBottleneck: raw?.primaryBottleneck,
+    topIssueTitle: raw?.topIssueTitle,
   });
   if (!parsed.success) {
     return NextResponse.json(
@@ -82,6 +84,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     url: parsed.data.url,
     score: parsed.data.score,
     device: parsed.data.device,
+    primaryBottleneck: parsed.data.primaryBottleneck,
+    topIssueTitle: parsed.data.topIssueTitle,
     country: h.get("x-vercel-ip-country") ?? undefined,
     city: decodeURIComponent(h.get("x-vercel-ip-city") ?? "") || undefined,
     ip,

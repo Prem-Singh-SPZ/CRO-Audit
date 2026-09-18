@@ -18,7 +18,8 @@
     "start:api": "npm run start --workspace @cro/api",
     "lint": "npm run lint --workspace @cro/web",
     "typecheck": "npm run typecheck --workspace @cro/shared && npm run typecheck --workspace @cro/api && npm run typecheck --workspace @cro/web",
-    "test": "vitest run"
+    "test": "vitest run",
+    "eval:accuracy": "tsx apps/api/src/eval/run-ab.ts"
   },
   "engines": {
     "node": ">=20.0.0"

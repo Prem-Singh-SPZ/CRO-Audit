@@ -14,7 +14,7 @@ export function Hero() {
       className="relative overflow-hidden pt-32 pb-20 sm:pt-40 sm:pb-28"
     >
       {/* Animated aurora backdrop */}
-      <AnimatedBackground intensity="default" />
+      <AnimatedBackground intensity="subtle" />
 
       <div className="container grid items-center gap-14 lg:grid-cols-[1.05fr_0.95fr]">
         {/* Left column — copy + form */}
@@ -23,20 +23,21 @@ export function Hero() {
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
-            className="mb-6 inline-flex items-center gap-2 rounded-full border bg-background/50 px-4 py-1.5 text-sm font-medium text-muted-foreground backdrop-blur"
+            className="mb-6 inline-flex max-w-full items-center gap-2 rounded-full border bg-background/50 px-3 py-1.5 text-xs font-medium text-muted-foreground backdrop-blur sm:px-4 sm:text-sm"
           >
-            <span className="flex h-2 w-2 rounded-full bg-success" />
-            {config.heroBadge}
+            <span className="h-2 w-2 shrink-0 rounded-full bg-success" />
+            <span className="sm:hidden">Predictive CRO · 30% lift in 90 days</span>
+            <span className="hidden sm:inline">{config.heroBadge}</span>
           </motion.div>
 
           <motion.h1
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.05 }}
-            className="max-w-2xl text-balance text-4xl font-semibold leading-[1.05] tracking-tight sm:text-6xl lg:text-[4rem]"
+            className="max-w-2xl text-balance text-[2rem] font-semibold leading-[1.1] tracking-tight sm:text-6xl lg:text-[4rem]"
           >
             Know Why Your Website{" "}
-            <span className="text-gradient-primary">Isn&apos;t Converting.</span>
+            <span className="text-primary">Isn&apos;t Converting.</span>
           </motion.h1>
 
           <motion.p
@@ -45,7 +46,7 @@ export function Hero() {
             transition={{ duration: 0.6, delay: 0.12 }}
             className="mt-6 max-w-xl text-balance text-lg text-muted-foreground sm:text-xl"
           >
-            Get a complete CRO audit in under 60 seconds. Screenshots,
+            Get a complete CRO audit in a few minutes. Screenshots,
             Lighthouse, and expert-level analysis with a prioritized action plan.
           </motion.p>
 
@@ -66,9 +67,7 @@ export function Hero() {
           transition={{ duration: 0.7, delay: 0.25, ease: [0.22, 1, 0.36, 1] }}
           className="relative mx-auto w-full max-w-md lg:max-w-none"
         >
-          <div className="animate-float">
-            <HeroPreview />
-          </div>
+          <HeroPreview />
         </motion.div>
       </div>
     </section>
@@ -85,13 +84,13 @@ function HeroPreview() {
   ];
 
   return (
-    <div className="glass-strong ring-gradient glow relative rounded-3xl border p-5 shadow-2xl shadow-primary/10">
+    <div className="relative rounded-2xl border bg-card p-5">
       {/* Floating lift badge */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.9 }}
-        className="absolute -right-3 -top-3 z-10 flex items-center gap-1.5 rounded-full border border-success/30 bg-background px-3 py-1.5 text-sm font-semibold text-success shadow-lg"
+        className="absolute right-2 top-2 z-10 flex items-center gap-1.5 rounded-full border border-success/30 bg-background px-3 py-1.5 text-sm font-semibold text-success shadow-lg sm:-right-3 sm:-top-3"
       >
         <TrendingUp className="h-4 w-4" />
         +38% est. lift

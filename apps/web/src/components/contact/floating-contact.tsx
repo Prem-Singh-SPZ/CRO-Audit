@@ -105,7 +105,7 @@ export function FloatingContact({ context }: { context?: ContactContext }) {
               <Button asChild variant="gradient" className="w-full justify-start">
                 <Link href={config.bookCallUrl} target="_blank">
                   <Calendar className="h-4 w-4" />
-                  Get a demo
+                  Fix My Page
                 </Link>
               </Button>
               <Button asChild variant="outline" className="w-full justify-start">

@@ -57,7 +57,7 @@ export default function OpengraphImage() {
             isn&rsquo;t converting.
           </span>
           <span style={{ fontSize: 30, color: "#F5A623", fontWeight: 600 }}>
-            A complete AI-powered CRO audit in under 60 seconds.
+            A complete AI-powered CRO audit in a few minutes.
           </span>
         </div>
 

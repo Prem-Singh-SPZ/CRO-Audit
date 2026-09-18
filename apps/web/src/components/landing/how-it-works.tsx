@@ -3,38 +3,10 @@ import { Link2, ScanSearch, Sparkles, LayoutDashboard } from "lucide-react";
 import { Reveal } from "@/components/reveal";
 
 const STEPS = [
-  {
-    icon: Link2,
-    step: "01",
-    title: "Enter your URL",
-    description:
-      "Paste any website URL. No signup, no credit card, no setup required.",
-    visual: "url",
-  },
-  {
-    icon: ScanSearch,
-    step: "02",
-    title: "We crawl & capture",
-    description:
-      "We fetch your page, capture a full-page desktop screenshot, and extract your content and structure.",
-    visual: "capture",
-  },
-  {
-    icon: Sparkles,
-    step: "03",
-    title: "We run the audit",
-    description:
-      "Google PageSpeed Insights plus a senior CRO consultant's framework analyze copy, design, trust, psychology, and conversion friction.",
-    visual: "analyze",
-  },
-  {
-    icon: LayoutDashboard,
-    step: "04",
-    title: "Get your report",
-    description:
-      "An interactive dashboard with your score, annotated screenshots, and a prioritized plan to convert more.",
-    visual: "report",
-  },
+  { icon: Link2, step: "01", title: "Read your page", visual: "url" },
+  { icon: ScanSearch, step: "02", title: "Keep your brand", visual: "capture" },
+  { icon: Sparkles, step: "03", title: "Generate the after", visual: "analyze" },
+  { icon: LayoutDashboard, step: "04", title: "Book to ship it", visual: "report" },
 ] as const;
 
 export function HowItWorks() {
@@ -46,12 +18,12 @@ export function HowItWorks() {
             How it works
           </p>
           <h2 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
-            From URL to insight in four steps
+            Read the page, keep the brand, show the after
           </h2>
         </Reveal>
 
-        <div className="relative mt-16 grid gap-8 md:grid-cols-4">
-          <div className="absolute left-0 right-0 top-[104px] hidden h-px bg-gradient-to-r from-transparent via-border to-transparent md:block" />
+        <div className="relative mt-16 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="absolute left-0 right-0 top-[104px] hidden h-px bg-gradient-to-r from-transparent via-border to-transparent lg:block" />
           {STEPS.map((step, i) => (
             <Reveal key={step.step} delay={i}>
               <div className="group relative flex flex-col items-center text-center">
@@ -63,9 +35,6 @@ export function HowItWorks() {
                   Step {step.step}
                 </span>
                 <h3 className="mt-2 text-lg font-semibold">{step.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                  {step.description}
-                </p>
               </div>
             </Reveal>
           ))}

@@ -1,0 +1,84 @@
+{
+  "overallScore": 58,
+  "primaryBottleneck": "The hero headline does not state a clear value proposition next to the form.",
+  "categoryScores": {
+    "hero": 52,
+    "trust": 60,
+    "cta": 55,
+    "copy": 50,
+    "design": 62,
+    "forms": 54,
+    "accessibility": 70,
+    "performance": 65,
+    "mobile": 60,
+    "psychology": 55,
+    "seo": 68,
+    "navigation": 64
+  },
+  "summary": "ActivTrak's hero headline and lead form compete instead of selling one value.",
+  "strengths": ["Social proof logos", "Navigation is logo-only"],
+  "weaknesses": ["Vague headline", "Form friction"],
+  "issues": [
+    {
+      "category": "copy",
+      "title": "Headline lacks a clear value",
+      "description": "The hero headline does not tell visitors the outcome ActivTrak delivers.",
+      "whyItMatters": "Visitors bounce when the value is unclear.",
+      "severity": "HIGH",
+      "confidence": 86,
+      "businessImpact": "",
+      "suggestedFix": "Requires custom UX/copywriting redesign.",
+      "estimatedConversionImpact": "+5-10%",
+      "annotation": {
+        "device": "desktop",
+        "x": 0.7,
+        "y": 0.3,
+        "width": 0.4,
+        "height": 0.16,
+        "element": "h1"
+      }
+    },
+    {
+      "category": "forms",
+      "title": "Form and email field steal focus",
+      "description": "The lead form sits beside the headline and asks for work email first.",
+      "whyItMatters": "Asking for email before value raises anxiety.",
+      "severity": "HIGH",
+      "confidence": 80,
+      "businessImpact": "",
+      "suggestedFix": "Requires custom UX/copywriting redesign.",
+      "estimatedConversionImpact": "+4-8%",
+      "annotation": {
+        "device": "desktop",
+        "x": 0.22,
+        "y": 0.48,
+        "width": 0.3,
+        "height": 0.4,
+        "element": "form"
+      }
+    },
+    {
+      "category": "cta",
+      "title": "Get started CTA is generic",
+      "description": "The primary CTA reads Get started free instead of a value-led label.",
+      "whyItMatters": "Generic CTAs convert worse than outcome-led labels.",
+      "severity": "MEDIUM",
+      "confidence": 74,
+      "businessImpact": "",
+      "suggestedFix": "Requires custom UX/copywriting redesign.",
+      "estimatedConversionImpact": "+2-5%",
+      "annotation": {
+        "device": "desktop",
+        "x": 0.22,
+        "y": 0.62,
+        "width": 0.22,
+        "height": 0.08,
+        "element": "cta"
+      }
+    }
+  ],
+  "recommendations": [],
+  "priority": "high",
+  "confidence": 80,
+  "estimatedImpact": "+8-15%"
+}

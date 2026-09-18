@@ -5,8 +5,6 @@ import { TrustedBy } from "@/components/landing/trusted-by";
 import { Stats } from "@/components/landing/stats";
 import { Features } from "@/components/landing/features";
 import { HowItWorks } from "@/components/landing/how-it-works";
-import { Comparison } from "@/components/landing/comparison";
-import { Benefits } from "@/components/landing/benefits";
 import { Testimonials } from "@/components/landing/testimonials";
 import { AgencyCta } from "@/components/report/agency-cta";
 import { FloatingContact } from "@/components/contact/floating-contact";
@@ -20,9 +18,7 @@ export default function HomePage() {
         <Hero />
         <TrustedBy />
         <HowItWorks />
-        <Comparison />
         <Features />
-        <Benefits />
         <Stats />
         <Testimonials />
         <section className="py-24">
@@ -30,7 +26,7 @@ export default function HomePage() {
             <AgencyCta
               context={{ source: "landing" }}
               title="Ready to grow your conversions?"
-              description={`${config.brandName} turns audits like this into measurable conversion lifts — 30% guaranteed in 90 days, with no fee until we deliver. Book a free demo and we'll map out your biggest opportunities.`}
+              description={`${config.brandName} turns this audit into a 30% lift in 90 days — no fee until we deliver.`}
             />
           </div>
         </section>

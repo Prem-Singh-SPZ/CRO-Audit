@@ -1,5 +1,7 @@
 "use client";
 
+import { REPORT_STORAGE_KEY } from "./report-store";
+
 // The scan request handed from the URL form to the /analyzing screen, which
 // runs the actual audit while showing the animated scanning experience.
 
@@ -10,11 +12,14 @@ export interface PendingScan {
   targetAudience?: string;
   coreProduct?: string;
   primaryTrafficSource?: string;
+  competitorUrl?: string;
 }
 
 export function setPendingScan(scan: PendingScan) {
   try {
     sessionStorage.setItem(PENDING_SCAN_KEY, JSON.stringify(scan));
+    // Drop the previous report so /report cannot show an old unusable banner.
+    sessionStorage.removeItem(REPORT_STORAGE_KEY);
   } catch {
     // ignore — the analyzing page falls back to an empty state.
   }
