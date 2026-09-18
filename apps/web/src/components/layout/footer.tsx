@@ -81,6 +81,7 @@ export function Footer() {
             <form
               action={config.contactUrl}
               method="get"
+              suppressHydrationWarning
               className="mt-4 flex items-center gap-2 rounded-full border bg-background p-1.5 shadow-sm focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20"
             >
               <input

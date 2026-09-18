@@ -69,6 +69,7 @@ export default function RootLayout({
     <html lang="en" className="overflow-x-clip" suppressHydrationWarning>
       <body
         className={`${montserrat.variable} ${inter.variable} overflow-x-clip font-sans`}
+        suppressHydrationWarning
       >
         <a
           href="#main-content"
