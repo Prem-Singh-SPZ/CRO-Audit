@@ -8,6 +8,8 @@ export interface WaybackHit {
   timestamp: string;
   replayUrl: string;
   capturedAt: string;
+  /** Original page URL when parsed from a replay or CDX row. */
+  original?: string;
 }
 
 const CDX_TIMEOUT_MS = 8_000;
