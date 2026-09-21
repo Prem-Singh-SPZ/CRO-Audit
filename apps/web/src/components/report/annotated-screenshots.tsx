@@ -72,7 +72,8 @@ function layoutForMockup(mockup: MockupDto, issues: IssueDto[] = []): SlotLayout
   }
   const formPage =
     name.includes("form") ||
-    mockup.variant === "form" ||
+    mockup.variant === "form-over-ui" ||
+    mockup.variant === "pattern" ||
     issues.some((i) =>
       /form|lead|email|demo|field/i.test(`${i.title} ${i.category}`)
     );
