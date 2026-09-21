@@ -17,10 +17,15 @@ import {
   layoutSnapshotsEqual,
   collectImageLoadInventory,
   countVisibleLeadFields,
+  documentImagesMostlyDecoded,
+  eagerDecodeDocumentImages,
   hideKnownConsentSdkInPage,
   imagesTooIncomplete,
   inlineZeroNaturalSvgImages,
+  leadFieldWaitDecision,
+  pageFontsReady,
   pageIsCaptureReady,
+  pageLeadFieldsHaveAuthorCss,
   shouldRetryCapture,
   shouldSkipConsentClick,
 } from "./capture-quality";
@@ -425,14 +430,17 @@ async function captureScreenshotsOnce(
       .catch(() => {});
 
     await waitOutAutoChallenge(page);
+    await page
+      .waitForFunction(countVisibleLeadFields, { timeout: 10_000 })
+      .catch(() => {});
     const leadFieldsBeforeConsent = await raceTimeout(
       page.evaluate(countVisibleLeadFields),
       PAGE_OP_TIMEOUT_MS,
       0
     );
     const skipConsentClick = shouldSkipConsentClick(leadFieldsBeforeConsent);
-    // Clicking OneTrust Accept remounts Fastly's form (6 fields → 2, stable).
-    // If the lead form already painted, only hide the banner SDK — do not click.
+    // If any lead field painted, only hide the banner SDK. Clicking Accept can
+    // remount the form; progressive/autofill tools may later settle to 2 fields.
     if (skipConsentClick) {
       const hiddenSdk = await raceTimeout(
         page.evaluate(hideKnownConsentSdkInPage),
@@ -597,7 +605,7 @@ async function captureScreenshotsOnce(
         incompleteCapture = true;
         captureNote =
           "The viewport had not finished loading (form, images, or spinner) when we captured the page.";
-        liveUsable = false;
+        liveUsable = screenshots.some((s) => s.device === "desktop");
       } else {
         const finalized = finalizeIncompleteFlag({
           fieldsReady: true,
@@ -725,6 +733,9 @@ async function prepareViewportForShot(
   await page
     .waitForNetworkIdle({ idleTime: 800, timeout: 8000 })
     .catch(() => {});
+  await page
+    .waitForFunction(countVisibleLeadFields, { timeout: 10_000 })
+    .catch(() => {});
   const fieldsBefore = await raceTimeout(
     page.evaluate(countVisibleLeadFields),
     PAGE_OP_TIMEOUT_MS,
@@ -773,6 +784,63 @@ async function prepareViewportForShot(
     false
   );
   return { ready: ready && still, dismissedConsent };
+}
+
+/** Progressive forms may remount (6→2). No-form pages exit after a short zero-stable. */
+async function waitUntilLeadFieldsStable(page: Page): Promise<number> {
+  const started = Date.now();
+  const deadline = started + 14_000;
+  let prev = await raceTimeout(
+    page.evaluate(countVisibleLeadFields),
+    PAGE_OP_TIMEOUT_MS,
+    0
+  );
+  let stableSince = Date.now();
+  while (Date.now() < deadline) {
+    const elapsedMs = Date.now() - started;
+    const stableMs = Date.now() - stableSince;
+    const phase = leadFieldWaitDecision({
+      prev,
+      next: prev,
+      elapsedMs,
+      stableMs,
+    });
+    if (phase !== "wait") return prev;
+    await sleep(500);
+    const next = await raceTimeout(
+      page.evaluate(countVisibleLeadFields),
+      PAGE_OP_TIMEOUT_MS,
+      0
+    );
+    if (next !== prev) {
+      stableSince = Date.now();
+      prev = next;
+    }
+  }
+  return prev;
+}
+
+/** Fonts, optional form CSS, then laid-out images — same path for every URL. */
+async function waitUntilDocumentPainted(page: Page): Promise<void> {
+  await raceTimeout(
+    page.evaluate(() => document.fonts.ready.then(() => true)),
+    8_000,
+    false
+  );
+  await page
+    .waitForFunction(pageFontsReady, { timeout: 5_000 })
+    .catch(() => undefined);
+  await page
+    .waitForFunction(pageLeadFieldsHaveAuthorCss, { timeout: 8_000 })
+    .catch(() => undefined);
+  await raceTimeout(
+    page.evaluate(eagerDecodeDocumentImages),
+    PAGE_OP_TIMEOUT_MS,
+    { promoted: 0, decoded: 0, total: 0 }
+  );
+  await page
+    .waitForFunction(documentImagesMostlyDecoded, { timeout: 8_000 })
+    .catch(() => undefined);
 }
 
 async function waitUntilLayoutStable(page: Page): Promise<void> {
@@ -976,13 +1044,19 @@ async function captureControlFullPage(
   );
   if (hidden > 0) {
     console.log(`[screenshot] hid ${hidden} consent nodes after full-page walk`);
+    await walkUntilPageSettled(page);
   }
   await raceTimeout(
     page.evaluate(() => window.scrollTo(0, 0)),
     PAGE_OP_TIMEOUT_MS,
     undefined
   );
-  await sleep(5_000);
+  const fieldCount = await waitUntilLeadFieldsStable(page);
+  await waitUntilDocumentPainted(page);
+  if (fieldCount > 0) {
+    await walkUntilPageSettled(page);
+    await waitUntilDocumentPainted(page);
+  }
   const gateReady = await raceTimeout(
     page.evaluate(pageIsCaptureReady),
     PAGE_OP_TIMEOUT_MS,

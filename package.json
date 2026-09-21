@@ -19,7 +19,8 @@
     "lint": "npm run lint --workspace @cro/web",
     "typecheck": "npm run typecheck --workspace @cro/shared && npm run typecheck --workspace @cro/api && npm run typecheck --workspace @cro/web",
     "test": "vitest run",
-    "eval:accuracy": "tsx apps/api/src/eval/run-ab.ts"
+    "eval:accuracy": "tsx apps/api/src/eval/run-ab.ts",
+    "deploy:api": "gcloud builds submit --config cloudbuild.yaml --project cro-audit-1784006672763 ."
   },
   "engines": {
     "node": ">=20.0.0"

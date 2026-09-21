@@ -16,6 +16,7 @@ import {
   isConsentAcceptLabel,
   isLiveCaptureUsable,
   isNearWhiteLuma,
+  leadFieldWaitDecision,
   shouldHideConsentNode,
   shouldRetryCapture,
 } from "./capture-quality";
@@ -330,7 +331,8 @@ describe("shouldSkipConsentClick", () => {
   });
 
   it("still clicks CMP when no form has painted yet", () => {
-    expect(shouldSkipConsentClick(2)).toBe(false);
+    expect(shouldSkipConsentClick(1)).toBe(true);
+    expect(shouldSkipConsentClick(2)).toBe(true);
     expect(shouldSkipConsentClick(0)).toBe(false);
   });
 });
@@ -604,5 +606,56 @@ describe("hasVisibleLoadingChrome", () => {
         },
       ])
     ).toBe(false);
+  });
+});
+
+describe("leadFieldWaitDecision", () => {
+  it("releases no-form pages after a short zero-stable", () => {
+    expect(
+      leadFieldWaitDecision({
+        prev: 0,
+        next: 0,
+        elapsedMs: 2_000,
+        stableMs: 2_000,
+      })
+    ).toBe("ready-none");
+    expect(
+      leadFieldWaitDecision({
+        prev: 0,
+        next: 0,
+        elapsedMs: 1_000,
+        stableMs: 1_000,
+      })
+    ).toBe("wait");
+  });
+
+  it("keeps waiting while a form is still remounting", () => {
+    expect(
+      leadFieldWaitDecision({
+        prev: 6,
+        next: 2,
+        elapsedMs: 9_000,
+        stableMs: 0,
+      })
+    ).toBe("wait");
+    expect(
+      leadFieldWaitDecision({
+        prev: 6,
+        next: 6,
+        elapsedMs: 3_000,
+        stableMs: 3_000,
+      })
+    ).toBe("wait");
+  });
+
+  it("releases a settled form after the progressive budget", () => {
+    expect(
+      leadFieldWaitDecision({
+        prev: 2,
+        next: 2,
+        elapsedMs: 8_000,
+        stableMs: 2_000,
+      })
+    ).toBe("ready-form");
   });
 });

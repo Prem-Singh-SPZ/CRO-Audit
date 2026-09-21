@@ -142,17 +142,9 @@ async function fetchCdx(target: string): Promise<WaybackHit | null> {
 }
 
 export async function lookupWayback(url: string): Promise<WaybackHit | null> {
-  const exact = await fetchCdx(url);
-  if (exact) return exact;
-  try {
-    const origin = `${new URL(url).origin}/`;
-    const same =
-      url === origin || url === origin.slice(0, -1) || `${url}/` === origin;
-    if (same) return null;
-    return fetchCdx(origin);
-  } catch {
-    return null;
-  }
+  // Exact URL only. Falling back to the site origin swapped in the Fastly
+  // homepage archive for /request-a-demo when live was marked unusable.
+  return fetchCdx(url);
 }
 
 /**

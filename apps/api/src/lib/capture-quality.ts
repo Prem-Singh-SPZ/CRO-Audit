@@ -1078,12 +1078,166 @@ export function hideKnownConsentSdkInPage(): number {
     el.setAttribute("aria-hidden", "true");
     hidden += 1;
   }
+  // Accept normally clears OneTrust's scroll lock. Hiding the banner does not.
+  if (hidden > 0) {
+    for (const el of [document.documentElement, document.body]) {
+      if (!el) continue;
+      el.style.setProperty("overflow", "visible", "important");
+      el.style.setProperty("overflow-y", "auto", "important");
+    }
+  }
   return hidden;
 }
 
-/** A painted lead form is safer to keep than clicking Accept (Fastly remount). */
+/** A painted lead form is safer to keep than clicking Accept (page remount). */
 export function shouldSkipConsentClick(visibleLeadFields: number): boolean {
-  return visibleLeadFields >= 3;
+  return visibleLeadFields >= 1;
+}
+
+export type LeadFieldWaitPhase = "wait" | "ready-form" | "ready-none";
+
+/**
+ * Generic settle: no-form pages must not sit on the 8s progressive-form
+ * budget. Form pages wait until the field count stops changing (6→2).
+ */
+export function leadFieldWaitDecision(input: {
+  prev: number;
+  next: number;
+  elapsedMs: number;
+  stableMs: number;
+  minFormWaitMs?: number;
+  noFormStableMs?: number;
+  formStableMs?: number;
+}): LeadFieldWaitPhase {
+  const minFormWaitMs = input.minFormWaitMs ?? 8_000;
+  const noFormStableMs = input.noFormStableMs ?? 2_000;
+  const formStableMs = input.formStableMs ?? 2_000;
+  if (input.next !== input.prev) return "wait";
+  if (input.next === 0) {
+    return input.stableMs >= noFormStableMs ? "ready-none" : "wait";
+  }
+  if (input.elapsedMs >= minFormWaitMs && input.stableMs >= formStableMs) {
+    return "ready-form";
+  }
+  return "wait";
+}
+
+export function pageFontsReady(): boolean {
+  return document.fonts.status === "loaded";
+}
+
+/**
+ * True when there are no lead fields, or every visible lead field
+ * has author padding / radius / a non-UA font.
+ */
+export function pageLeadFieldsHaveAuthorCss(): boolean {
+  const vw = window.innerWidth || 1440;
+  const vh = window.innerHeight || 900;
+  const fields = Array.from(
+    document.querySelectorAll("input, textarea, select")
+  ).filter((el): el is HTMLElement => {
+    if (!(el instanceof HTMLElement)) return false;
+    if (el instanceof HTMLInputElement) {
+      const t = el.type.toLowerCase();
+      if (
+        t === "hidden" ||
+        t === "submit" ||
+        t === "button" ||
+        t === "image" ||
+        t === "checkbox" ||
+        t === "radio" ||
+        t === "file"
+      ) {
+        return false;
+      }
+    }
+    const st = getComputedStyle(el);
+    if (
+      st.display === "none" ||
+      st.visibility === "hidden" ||
+      Number(st.opacity) === 0
+    ) {
+      return false;
+    }
+    const r = el.getBoundingClientRect();
+    return (
+      r.width >= 32 &&
+      r.height >= 14 &&
+      r.bottom > 0 &&
+      r.top < vh &&
+      r.right > 0 &&
+      r.left < vw
+    );
+  });
+  if (fields.length === 0) return true;
+  return fields.every((el) => {
+    const st = getComputedStyle(el);
+    const pad = Number.parseFloat(st.paddingLeft) || 0;
+    const radius = Number.parseFloat(st.borderRadius) || 0;
+    if (pad >= 10 || radius >= 4) return true;
+    const font = (st.fontFamily || "").replace(/["']/g, "").trim().toLowerCase();
+    if (!font) return false;
+    if (/^(times|times new roman|serif|initial|inherit)(,|$)/.test(font)) {
+      return false;
+    }
+    return true;
+  });
+}
+
+/**
+ * Footer / below-fold images stay at 0×0 until loading=lazy fires.
+ * Promote them to eager and decode so a full-page shot is complete.
+ */
+export async function eagerDecodeDocumentImages(): Promise<{
+  promoted: number;
+  decoded: number;
+  total: number;
+}> {
+  const imgs = Array.from(document.images);
+  let promoted = 0;
+  const jobs = imgs.map(async (img) => {
+    if (img.getAttribute("loading") === "lazy") {
+      img.loading = "eager";
+      promoted += 1;
+    }
+    const dataSrc =
+      img.getAttribute("data-src") ||
+      img.getAttribute("data-lazy-src") ||
+      img.getAttribute("data-original");
+    if (dataSrc && (!img.currentSrc || img.naturalWidth < 2)) {
+      img.src = dataSrc;
+      promoted += 1;
+    }
+    try {
+      await img.decode();
+    } catch {
+      /* decode can reject for SVG / already-broken */
+    }
+    return img.complete && img.naturalWidth > 20;
+  });
+  const rows = await Promise.all(jobs);
+  return {
+    promoted,
+    decoded: rows.filter(Boolean).length,
+    total: imgs.length,
+  };
+}
+
+export function documentImagesMostlyDecoded(): boolean {
+  let need = 0;
+  let done = 0;
+  for (const img of Array.from(document.images)) {
+    const r = img.getBoundingClientRect();
+    const lazy = img.getAttribute("loading") === "lazy";
+    if (!lazy && r.width < 24 && r.height < 16) continue;
+    if (!img.src && !img.currentSrc) continue;
+    need += 1;
+    const src = (img.currentSrc || img.src || "").toLowerCase();
+    const svg =
+      /\.svg(\?|#|$)/.test(src) || src.startsWith("data:image/svg");
+    if (img.complete && (img.naturalWidth > 20 || svg)) done += 1;
+  }
+  return need === 0 || done >= need;
 }
 
 /** Visible lead inputs. Self-contained for page.evaluate. */

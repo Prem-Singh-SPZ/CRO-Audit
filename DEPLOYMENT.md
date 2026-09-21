@@ -11,10 +11,29 @@ Shared Zod schemas / DTOs live in `packages/shared` (`@cro/shared`).
 
 ## 1. Deploy the API to GCP Cloud Run
 
+`git push` updates **Vercel (UI) only**. Screenshots run on Cloud Run. If local
+looks correct but live still shows a broken/collapsed layout, the API image was
+not rebuilt — redeploy Cloud Run.
+
 Requires a GCP project with Cloud Run + Artifact Registry (or Cloud Build) enabled.
 The always-free Cloud Run allowance is enough for light personal/demo traffic.
 
-### Build & deploy
+### Deploy with Cloud Build (no local Docker)
+
+From the **monorepo root**, after `gcloud auth login`:
+
+```bash
+gcloud config set project cro-audit-1784006672763
+gcloud builds submit --config cloudbuild.yaml .
+```
+
+This builds the API image in GCP and deploys `cro-audit-api` in `europe-west1`.
+Existing Cloud Run env vars (Gemini, CORS, cache) are kept. Wait until the
+build shows SUCCESS before auditing on the live site.
+
+Or: `npm run deploy:api`
+
+### First-time / manual deploy (local Docker)
 
 From the **monorepo root**:
 
