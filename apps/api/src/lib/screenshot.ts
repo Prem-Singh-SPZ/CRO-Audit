@@ -200,6 +200,73 @@ function usesLocalChrome(): boolean {
   return Boolean(process.env.CHROME_EXECUTABLE_PATH?.trim());
 }
 
+/** Third-party hosts that often SIGILL @sparticuz/chromium during goto. */
+const HEAVY_THIRD_PARTY_HOSTS = [
+  "google-analytics.com",
+  "googletagmanager.com",
+  "googlesyndication.com",
+  "googleadservices.com",
+  "doubleclick.net",
+  "facebook.net",
+  "facebook.com",
+  "hotjar.com",
+  "fullstory.com",
+  "segment.io",
+  "segment.com",
+  "amplitude.com",
+  "mixpanel.com",
+  "intercom.io",
+  "intercomcdn.com",
+  "hs-analytics.net",
+  "hs-scripts.com",
+  "hubspot.com",
+  "clarity.ms",
+  "youtube.com",
+  "youtube-nocookie.com",
+  "ytimg.com",
+  "vimeo.com",
+  "wistia.com",
+] as const;
+
+function hostIsOrSub(host: string, suffix: string): boolean {
+  return host === suffix || host.endsWith(`.${suffix}`);
+}
+
+/** Drop media/wasm/trackers on Cloud Run so Chromium survives navigation. */
+function shouldAbortHeavyCaptureRequest(
+  href: string,
+  resourceType: string,
+  pageHost: string
+): boolean {
+  if (resourceType === "media" || resourceType === "websocket") return true;
+  if (/\.wasm(\?|#|$)/i.test(href)) return true;
+  try {
+    const host = new URL(href).hostname.toLowerCase();
+    if (!host || host === pageHost || host.endsWith(`.${pageHost}`)) {
+      return false;
+    }
+    return HEAVY_THIRD_PARTY_HOSTS.some((suffix) => hostIsOrSub(host, suffix));
+  } catch {
+    return false;
+  }
+}
+
+/** Cloud Run 2Gi can multiprocess. --single-process is what SIGILL's on WASM/WebGL. */
+function serverlessChromeArgs(): string[] {
+  return [
+    ...chromium.args.filter(
+      (a) => !/^--single-process$/i.test(a) && !/^--no-zygote$/i.test(a)
+    ),
+    "--disable-dev-shm-usage",
+    "--disable-crash-reporter",
+    "--disable-gpu",
+    "--disable-webgl",
+    "--disable-webgl2",
+    "--disable-accelerated-2d-canvas",
+    "--mute-audio",
+  ];
+}
+
 function pageStillOpen(page: Page): boolean {
   try {
     return !page.isClosed() && !page.mainFrame().detached;
@@ -349,13 +416,14 @@ async function launchBrowser(): Promise<Browser> {
   const executablePath = await chromium.executablePath();
   console.log(`[screenshot] sparticuz binary: ${executablePath}`);
 
+  const args = serverlessChromeArgs();
+  debugCapture("F", "screenshot.ts:launch", "serverless-args", {
+    singleProcess: args.some((a) => /single-process/i.test(a)),
+    noZygote: args.some((a) => /no-zygote/i.test(a)),
+    argCount: args.length,
+  });
   return puppeteer.launch({
-    args: [
-      ...chromium.args,
-      "--disable-dev-shm-usage",
-      "--disable-crash-reporter",
-      "--disable-gpu",
-    ],
+    args,
     defaultViewport: VIEWPORT,
     executablePath,
     headless: true,
@@ -458,6 +526,13 @@ async function captureScreenshotsOnce(
     // subresources) that targets a disallowed scheme, internal host, or
     // private/reserved IP literal. The primary target's DNS is already checked
     // upstream via assertSafeExternalUrl.
+    let pageHost = "";
+    try {
+      pageHost = new URL(url).hostname.toLowerCase();
+    } catch {
+      pageHost = "";
+    }
+    let abortedHeavy = 0;
     await page.setRequestInterception(true);
     page.on("request", (req) => {
       const href = req.url();
@@ -467,9 +542,17 @@ async function captureScreenshotsOnce(
       }
       if (isBlockedUrlSync(href)) {
         req.abort().catch(() => {});
-      } else {
-        req.continue().catch(() => {});
+        return;
       }
+      if (
+        !usesLocalChrome() &&
+        shouldAbortHeavyCaptureRequest(href, req.resourceType(), pageHost)
+      ) {
+        abortedHeavy += 1;
+        req.abort().catch(() => {});
+        return;
+      }
+      req.continue().catch(() => {});
     });
 
     // Auto-dismiss any JS dialog (alert/confirm/beforeunload). An open dialog
@@ -480,18 +563,39 @@ async function captureScreenshotsOnce(
     });
 
     let status = 0;
+    let midNavShot: Promise<Screenshot | null> = Promise.resolve(null);
+    if (!usesLocalChrome()) {
+      midNavShot = new Promise((resolve) => {
+        const finish = (shot: Screenshot | null) => resolve(shot);
+        page.once("domcontentloaded", () => {
+          void captureViewportJpeg(page).then(finish).catch(() => finish(null));
+        });
+        page.once("close", () => finish(null));
+      });
+    }
     try {
-      // Wait only for the DOM, not full network idle: heavy marketing pages
-      // (analytics, chat widgets, A/B tools, video) often never reach
-      // networkidle2, which would otherwise time out the whole navigation and
-      // leave us with nothing to capture.
+      // Cloud Run: commit returns before heavy JS/WASM. Local waits for DCL.
       const response = await page.goto(url, {
-        waitUntil: "domcontentloaded",
+        waitUntil: usesLocalChrome() ? "domcontentloaded" : "commit",
       });
       status = response?.status() ?? 0;
     } catch (err) {
-      // Navigation timed out or aborted — capture whatever rendered anyway.
       console.warn("[screenshot] navigation issue (continuing):", err);
+      debugCapture("F", "screenshot.ts:goto", "goto-failed", {
+        err: (err as Error)?.message ?? String(err),
+        pageOpen: pageStillOpen(page),
+        abortedHeavy,
+      });
+    }
+    const duringNav = await raceTimeout(midNavShot, 5_000, null);
+    if (duringNav && screenshots.length === 0) {
+      screenshots.push(duringNav);
+      heroShot = duringNav;
+      debugCapture("F", "screenshot.ts:goto", "mid-nav-fold", {
+        w: duringNav.width,
+        h: duringNav.height,
+        abortedHeavy,
+      });
     }
 
     await waitUntilDocumentComplete(page);
@@ -499,6 +603,35 @@ async function captureScreenshotsOnce(
       await page
         .waitForNetworkIdle({ idleTime: 800, timeout: 8000 })
         .catch(() => {});
+    }
+
+    // Cloud Run: shoot the fold before consent / page.content() can crash Chromium.
+    if (!usesLocalChrome() && pageStillOpen(page)) {
+      try {
+        const early = await captureViewportJpeg(page);
+        if (early) {
+          screenshots.push(early);
+          heroShot = early;
+          debugCapture("A", "screenshot.ts:earlyViewport", "early-fold", {
+            ok: true,
+            w: early.width,
+            h: early.height,
+            localChrome: false,
+          });
+        } else {
+          debugCapture("B", "screenshot.ts:earlyViewport", "early-fold", {
+            ok: false,
+            reason: "null-jpeg",
+            pageOpen: pageStillOpen(page),
+          });
+        }
+      } catch (err) {
+        debugCapture("B", "screenshot.ts:earlyViewport", "early-fold", {
+          ok: false,
+          reason: isDeadPageError(err) ? "dead-page" : "throw",
+          err: (err as Error)?.message ?? String(err),
+        });
+      }
     }
 
     await waitOutAutoChallenge(page);
@@ -564,6 +697,12 @@ async function captureScreenshotsOnce(
       console.warn(
         `[screenshot] skipping capture for ${url} — reason: ${blockedReason} (status ${status})`
       );
+      debugCapture("C", "screenshot.ts:blocked", "blocked-before-control", {
+        blockedReason,
+        status,
+        earlyShots: screenshots.length,
+        pageOpen: pageStillOpen(page),
+      });
     }
 
     if (!blockedReason) {
@@ -603,30 +742,37 @@ async function captureScreenshotsOnce(
         );
       }
 
-      // Grab the post-JS DOM so the caller can recover CRO signals if the plain
-      // HTTP crawl was walled by a WAF. Bounded (~2MB) so a giant document can't
-      // balloon function memory; time-boxed like every other page op.
-      const html = await raceTimeout(page.content(), PAGE_OP_TIMEOUT_MS, "");
-      renderedHtml = html ? html.slice(0, 2_000_000) : null;
-
       await raceTimeout(
         page.evaluate(() => window.scrollTo(0, 0)),
         PAGE_OP_TIMEOUT_MS,
         undefined
       );
-      let viewportShot: Screenshot | null = null;
+      let viewportShot: Screenshot | null = screenshots[0] ?? null;
       let control = { shot: null as Screenshot | null, ready: false };
       if (!usesLocalChrome()) {
-        const pack = await captureServerlessControl(page);
-        if (pack.dismissedConsent) dismissedConsent = true;
-        viewportShot = pack.viewport;
-        if (viewportShot) heroShot = viewportShot;
-        if (pack.control) {
-          screenshots.push(pack.control);
-          control = { shot: pack.control, ready: true };
-        } else if (viewportShot) {
-          screenshots.push(viewportShot);
-          control = { shot: viewportShot, ready: true };
+        try {
+          const pack = await captureServerlessControl(page);
+          if (pack.dismissedConsent) dismissedConsent = true;
+          viewportShot = pack.viewport ?? viewportShot;
+          if (viewportShot) heroShot = viewportShot;
+          if (pack.control) {
+            screenshots.length = 0;
+            screenshots.push(pack.control);
+            control = { shot: pack.control, ready: true };
+          }
+        } catch (err) {
+          console.warn(
+            "[screenshot] serverless control failed, keeping early fold:",
+            (err as Error)?.message ?? err
+          );
+        }
+        if (!control.shot && screenshots.length > 0) {
+          control = { shot: screenshots[0] ?? null, ready: true };
+        }
+        // HTML after the JPEG so a giant DOM serialize cannot empty the capture.
+        if (pageStillOpen(page)) {
+          const html = await raceTimeout(page.content(), PAGE_OP_TIMEOUT_MS, "");
+          renderedHtml = html ? html.slice(0, 2_000_000) : null;
         }
       } else {
         try {
@@ -659,6 +805,10 @@ async function captureScreenshotsOnce(
         if (control.shot) {
           screenshots.length = 0;
           screenshots.push(control.shot);
+        }
+        if (pageStillOpen(page)) {
+          const html = await raceTimeout(page.content(), PAGE_OP_TIMEOUT_MS, "");
+          renderedHtml = html ? html.slice(0, 2_000_000) : null;
         }
       }
       const controlShot = control.shot;
@@ -707,6 +857,10 @@ async function captureScreenshotsOnce(
       const hasCollapsedIframe = signals.formIframes.some(
         (f) => f.width >= 80 && f.height < 40
       );
+      if (screenshots.length > 0) {
+        control.ready = true;
+        liveUsable = true;
+      }
       if (!control.ready && screenshots.length === 0) {
         incompleteCapture = true;
         captureNote =
@@ -764,6 +918,38 @@ async function captureScreenshotsOnce(
         }
       }
     }
+
+    if (screenshots.length === 0 && pageStillOpen(page)) {
+      try {
+        const last = await captureViewportJpeg(page);
+        debugCapture("D", "screenshot.ts:lastResort", "last-resort", {
+          ok: Boolean(last),
+          blockedReason,
+          pageOpen: pageStillOpen(page),
+        });
+        if (last) {
+          screenshots.push(last);
+          heroShot = last;
+          liveUsable = true;
+          incompleteCapture = false;
+          captureNote = null;
+        }
+      } catch (err) {
+        debugCapture("D", "screenshot.ts:lastResort", "last-resort", {
+          ok: false,
+          err: (err as Error)?.message ?? String(err),
+        });
+      }
+    }
+
+    debugCapture("E", "screenshot.ts:return", "capture-outcome", {
+      shots: screenshots.length,
+      liveUsable,
+      incompleteCapture,
+      blockedReason,
+      captureNote,
+      pageOpen: pageStillOpen(page),
+    });
   } catch (err) {
     console.error("[screenshot] capture failed:", (err as Error)?.message ?? err);
     console.error("[screenshot] stack:", (err as Error)?.stack);
@@ -1142,20 +1328,13 @@ async function shootControlJpeg(
   return { shot: null, method: "none" };
 }
 
-/** Cloud Run: consent → fold → full JPEG. No walk, no waitForFunction. */
+/** Cloud Run: fold first, then consent / fonts. No walk, no waitForFunction. */
 async function captureServerlessControl(page: Page): Promise<{
   viewport: Screenshot | null;
   control: Screenshot | null;
   dismissedConsent: boolean;
   method: string;
 }> {
-  const dismissedConsent = await clearVisitorConsent(page, true);
-  await waitForFonts(page);
-  await raceTimeout(
-    page.evaluate(eagerDecodeDocumentImages),
-    PAGE_OP_TIMEOUT_MS,
-    { promoted: 0, decoded: 0, total: 0 }
-  );
   await raceTimeout(
     page.evaluate(() => window.scrollTo(0, 0)),
     PAGE_OP_TIMEOUT_MS,
@@ -1164,6 +1343,13 @@ async function captureServerlessControl(page: Page): Promise<{
   const viewport = pageStillOpen(page)
     ? await captureViewportJpeg(page)
     : null;
+  const dismissedConsent = await clearVisitorConsent(page, true);
+  await waitForFonts(page);
+  await raceTimeout(
+    page.evaluate(eagerDecodeDocumentImages),
+    PAGE_OP_TIMEOUT_MS,
+    { promoted: 0, decoded: 0, total: 0 }
+  );
   const taken = await shootControlJpeg(page);
   const control = taken.shot ?? viewport;
   debugCapture("B", "screenshot.ts:serverless", "serverless-control", {
