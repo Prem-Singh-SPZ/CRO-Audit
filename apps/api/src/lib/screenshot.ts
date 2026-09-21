@@ -269,6 +269,57 @@ function shotTimeoutMs(): number {
   return usesLocalChrome() ? SCREENSHOT_TIMEOUT_MS : 8_000;
 }
 
+async function openCaptureTab(
+  browser: Browser,
+  url: string,
+  desktopUa: string,
+  jsEnabled: boolean
+): Promise<{ page: Page; abortedHeavy: () => number }> {
+  const page = await browser.newPage();
+  let abortedHeavy = 0;
+  let pageHost = "";
+  try {
+    pageHost = new URL(url).hostname.toLowerCase();
+  } catch {
+    pageHost = "";
+  }
+  await page.setUserAgent(desktopUa);
+  await page.setExtraHTTPHeaders({ "Accept-Language": "en-US,en;q=0.9" });
+  await page.setJavaScriptEnabled(jsEnabled);
+  if (jsEnabled) {
+    await page.evaluateOnNewDocument(`
+      Object.defineProperty(navigator, "webdriver", { get: function () { return undefined; } });
+      globalThis.__name = function (fn) { return fn; };
+    `);
+  }
+  page.setDefaultNavigationTimeout(NAV_TIMEOUT_MS);
+  await page.setRequestInterception(true);
+  page.on("request", (req) => {
+    const href = req.url();
+    if (href.startsWith("data:") || href.startsWith("blob:")) {
+      req.continue().catch(() => {});
+      return;
+    }
+    if (isBlockedUrlSync(href)) {
+      req.abort().catch(() => {});
+      return;
+    }
+    if (
+      !usesLocalChrome() &&
+      shouldAbortHeavyCaptureRequest(href, req.resourceType(), pageHost)
+    ) {
+      abortedHeavy += 1;
+      req.abort().catch(() => {});
+      return;
+    }
+    req.continue().catch(() => {});
+  });
+  page.on("dialog", (d) => {
+    d.dismiss().catch(() => {});
+  });
+  return { page, abortedHeavy: () => abortedHeavy };
+}
+
 function fullPageTimeoutMs(): number {
   return usesLocalChrome() ? FULL_PAGE_TIMEOUT_MS : 10_000;
 }
@@ -515,60 +566,15 @@ async function captureScreenshotsOnce(
 
   try {
     browser = await launchBrowser();
-    const page: Page = await browser.newPage();
     desktopUa = await desktopUserAgent(browser);
-    await page.setUserAgent(desktopUa);
-    await page.setExtraHTTPHeaders({ "Accept-Language": "en-US,en;q=0.9" });
-    // Basic fingerprint hardening: hide the headless `navigator.webdriver`
-    // flag so naive bot checks don't wall us. Won't defeat geo-blocks or
-    // advanced (DataDome-class) protection.
-    // String source: tsx/esbuild keepNames injects `__name()` into compiled
-    // functions. page.evaluate serializes that source, and the page has no
-    // `__name` — consent dismiss, form-ready, and hide-overlay all no-op'd.
-    await page.evaluateOnNewDocument(`
-      Object.defineProperty(navigator, "webdriver", { get: function () { return undefined; } });
-      globalThis.__name = function (fn) { return fn; };
-    `);
-    page.setDefaultNavigationTimeout(NAV_TIMEOUT_MS);
-
-    // SSRF guard for the browser: abort any request (including redirects and
-    // subresources) that targets a disallowed scheme, internal host, or
-    // private/reserved IP literal. The primary target's DNS is already checked
-    // upstream via assertSafeExternalUrl.
-    let pageHost = "";
-    try {
-      pageHost = new URL(url).hostname.toLowerCase();
-    } catch {
-      pageHost = "";
-    }
-    let abortedHeavy = 0;
-    await page.setRequestInterception(true);
-    page.on("request", (req) => {
-      const href = req.url();
-      if (href.startsWith("data:") || href.startsWith("blob:")) {
-        req.continue().catch(() => {});
-        return;
-      }
-      if (isBlockedUrlSync(href)) {
-        req.abort().catch(() => {});
-        return;
-      }
-      if (
-        !usesLocalChrome() &&
-        shouldAbortHeavyCaptureRequest(href, req.resourceType(), pageHost)
-      ) {
-        abortedHeavy += 1;
-        req.abort().catch(() => {});
-        return;
-      }
-      req.continue().catch(() => {});
-    });
-
-    // Auto-dismiss any JS dialog (alert/confirm/beforeunload). An open dialog
-    // blocks the page's main thread, which would otherwise freeze every
-    // subsequent CDP call (title/evaluate/screenshot) until it times out.
-    page.on("dialog", (d) => {
-      d.dismiss().catch(() => {});
+    // Cloud Run: first paint with JS off. Blue J / Webflow SIGILL's V8 during
+    // goto; SSR HTML still screenshots. Local Chrome keeps JS on.
+    const firstJs = usesLocalChrome();
+    const firstTab = await openCaptureTab(browser, url, desktopUa, firstJs);
+    const page: Page = firstTab.page;
+    debugCapture("G", "screenshot.ts:goto", "js-mode", {
+      js: firstJs,
+      localChrome: usesLocalChrome(),
     });
 
     let status = 0;
@@ -582,7 +588,8 @@ async function captureScreenshotsOnce(
       debugCapture("F", "screenshot.ts:goto", "goto-failed", {
         err: (err as Error)?.message ?? String(err),
         pageOpen: pageStillOpen(page),
-        abortedHeavy,
+        abortedHeavy: firstTab.abortedHeavy(),
+        js: firstJs,
       });
     }
 
@@ -618,6 +625,43 @@ async function captureScreenshotsOnce(
           ok: false,
           reason: isDeadPageError(err) ? "dead-page" : "throw",
           err: (err as Error)?.message ?? String(err),
+        });
+      }
+    }
+
+    // Upgrade to a JS-painted control when Chromium survives. If V8 SIGILL's,
+    // the no-JS fold already in `screenshots` is kept.
+    if (!usesLocalChrome() && browser) {
+      try {
+        const upgrade = await openCaptureTab(browser, url, desktopUa, true);
+        try {
+          await upgrade.page.goto(url, { waitUntil: "domcontentloaded" });
+          const pack = await captureServerlessControl(upgrade.page);
+          if (pack.control) {
+            screenshots.length = 0;
+            screenshots.push(pack.control);
+            heroShot = pack.viewport ?? pack.control;
+            debugCapture("G", "screenshot.ts:jsUpgrade", "js-upgrade", {
+              ok: true,
+              w: pack.control.width,
+              h: pack.control.height,
+            });
+          } else {
+            debugCapture("G", "screenshot.ts:jsUpgrade", "js-upgrade", {
+              ok: false,
+              reason: "no-jpeg",
+              kept: screenshots.length,
+            });
+          }
+        } finally {
+          await upgrade.page.close().catch(() => {});
+        }
+      } catch (err) {
+        debugCapture("G", "screenshot.ts:jsUpgrade", "js-upgrade", {
+          ok: false,
+          reason: isDeadPageError(err) ? "dead-page" : "throw",
+          err: (err as Error)?.message ?? String(err),
+          kept: screenshots.length,
         });
       }
     }
@@ -738,24 +782,28 @@ async function captureScreenshotsOnce(
       let viewportShot: Screenshot | null = screenshots[0] ?? null;
       let control = { shot: null as Screenshot | null, ready: false };
       if (!usesLocalChrome()) {
-        try {
-          const pack = await captureServerlessControl(page);
-          if (pack.dismissedConsent) dismissedConsent = true;
-          viewportShot = pack.viewport ?? viewportShot;
-          if (viewportShot) heroShot = viewportShot;
-          if (pack.control) {
-            screenshots.length = 0;
-            screenshots.push(pack.control);
-            control = { shot: pack.control, ready: true };
-          }
-        } catch (err) {
-          console.warn(
-            "[screenshot] serverless control failed, keeping early fold:",
-            (err as Error)?.message ?? err
-          );
-        }
-        if (!control.shot && screenshots.length > 0) {
+        if (screenshots.length > 0) {
           control = { shot: screenshots[0] ?? null, ready: true };
+        } else {
+          try {
+            const pack = await captureServerlessControl(page);
+            if (pack.dismissedConsent) dismissedConsent = true;
+            viewportShot = pack.viewport ?? viewportShot;
+            if (viewportShot) heroShot = viewportShot;
+            if (pack.control) {
+              screenshots.length = 0;
+              screenshots.push(pack.control);
+              control = { shot: pack.control, ready: true };
+            }
+          } catch (err) {
+            console.warn(
+              "[screenshot] serverless control failed, keeping early fold:",
+              (err as Error)?.message ?? err
+            );
+          }
+          if (!control.shot && screenshots.length > 0) {
+            control = { shot: screenshots[0] ?? null, ready: true };
+          }
         }
         // HTML after the JPEG so a giant DOM serialize cannot empty the capture.
         if (pageStillOpen(page)) {
