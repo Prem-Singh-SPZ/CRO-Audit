@@ -251,12 +251,10 @@ function shouldAbortHeavyCaptureRequest(
   }
 }
 
-/** Cloud Run 2Gi can multiprocess. --single-process is what SIGILL's on WASM/WebGL. */
+/** Keep Sparticuz --single-process. Dropping it caused SIGSEGV and hung analyze. */
 function serverlessChromeArgs(): string[] {
   return [
-    ...chromium.args.filter(
-      (a) => !/^--single-process$/i.test(a) && !/^--no-zygote$/i.test(a)
-    ),
+    ...chromium.args,
     "--disable-dev-shm-usage",
     "--disable-crash-reporter",
     "--disable-gpu",
@@ -265,6 +263,14 @@ function serverlessChromeArgs(): string[] {
     "--disable-accelerated-2d-canvas",
     "--mute-audio",
   ];
+}
+
+function shotTimeoutMs(): number {
+  return usesLocalChrome() ? SCREENSHOT_TIMEOUT_MS : 8_000;
+}
+
+function fullPageTimeoutMs(): number {
+  return usesLocalChrome() ? FULL_PAGE_TIMEOUT_MS : 10_000;
 }
 
 function pageStillOpen(page: Page): boolean {
@@ -470,9 +476,12 @@ async function unregisterServiceWorkers(page: Page): Promise<void> {
 export async function captureScreenshots(url: string): Promise<ScreenshotResult> {
   const archiveLookup = lookupWayback(url).catch(() => null);
   const first = await captureScreenshotsOnce(url, archiveLookup);
-  if (!shouldRetryCapture(first)) return first;
-  console.warn("[screenshot] retrying empty capture");
-  return captureScreenshotsOnce(url, archiveLookup);
+  // Cloud Run retry doubles a dead Chromium and blows the 200s client budget.
+  if (usesLocalChrome() && shouldRetryCapture(first)) {
+    console.warn("[screenshot] retrying empty capture");
+    return captureScreenshotsOnce(url, archiveLookup);
+  }
+  return first;
 }
 
 async function captureScreenshotsOnce(
@@ -563,18 +572,7 @@ async function captureScreenshotsOnce(
     });
 
     let status = 0;
-    let midNavShot: Promise<Screenshot | null> = Promise.resolve(null);
-    if (!usesLocalChrome()) {
-      midNavShot = new Promise((resolve) => {
-        const finish = (shot: Screenshot | null) => resolve(shot);
-        page.once("domcontentloaded", () => {
-          void captureViewportJpeg(page).then(finish).catch(() => finish(null));
-        });
-        page.once("close", () => finish(null));
-      });
-    }
     try {
-      // Earliest Puppeteer lifecycle (Playwright's "commit" is not valid here).
       const response = await page.goto(url, {
         waitUntil: "domcontentloaded",
       });
@@ -584,16 +582,6 @@ async function captureScreenshotsOnce(
       debugCapture("F", "screenshot.ts:goto", "goto-failed", {
         err: (err as Error)?.message ?? String(err),
         pageOpen: pageStillOpen(page),
-        abortedHeavy,
-      });
-    }
-    const duringNav = await raceTimeout(midNavShot, 5_000, null);
-    if (duringNav && screenshots.length === 0) {
-      screenshots.push(duringNav);
-      heroShot = duringNav;
-      debugCapture("F", "screenshot.ts:goto", "mid-nav-fold", {
-        w: duringNav.width,
-        h: duringNav.height,
         abortedHeavy,
       });
     }
@@ -1164,7 +1152,7 @@ async function waitUntilLayoutStable(page: Page): Promise<void> {
 async function captureViewportJpeg(page: Page): Promise<Screenshot | null> {
   const raw = await raceTimeout<Buffer | Uint8Array | null>(
     page.screenshot({ type: "jpeg", quality: 82, fullPage: false }),
-    SCREENSHOT_TIMEOUT_MS,
+    shotTimeoutMs(),
     null
   );
   if (!raw) return null;
@@ -1207,7 +1195,7 @@ async function captureClippedDocumentJpeg(page: Page): Promise<Screenshot | null
         quality: 75,
         clip: { x: 0, y: 0, width: VIEWPORT.width, height },
       }),
-      FULL_PAGE_TIMEOUT_MS,
+      fullPageTimeoutMs(),
       null
     );
     if (!raw) return null;
@@ -1248,7 +1236,7 @@ async function captureNativeFullPageJpeg(page: Page): Promise<Screenshot | null>
         fromSurface: true,
         captureBeyondViewport: true,
       }),
-      FULL_PAGE_TIMEOUT_MS,
+      fullPageTimeoutMs(),
       null
     );
     if (!result?.data) return null;
@@ -1285,7 +1273,7 @@ async function captureNativeFullPageJpeg(page: Page): Promise<Screenshot | null>
 async function capturePuppeteerFullPageJpeg(page: Page): Promise<Screenshot | null> {
   const raw = await raceTimeout<Buffer | Uint8Array | null>(
     page.screenshot({ type: "jpeg", quality: 75, fullPage: true }),
-    FULL_PAGE_TIMEOUT_MS,
+    fullPageTimeoutMs(),
     null
   );
   if (!raw) return null;
