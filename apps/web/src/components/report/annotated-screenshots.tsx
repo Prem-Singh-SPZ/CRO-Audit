@@ -59,9 +59,8 @@ const SLOTS_BY_LAYOUT: Record<SlotLayout, Record<ChangeSlot, SlotBox>> = {
   },
 };
 
-function layoutForMockup(mockup: MockupDto): SlotLayout {
-  if (mockup.variant === "hero" || !mockup.patternName) return "hero";
-  const name = mockup.patternName.toLowerCase();
+function layoutForMockup(mockup: MockupDto, issues: IssueDto[] = []): SlotLayout {
+  const name = (mockup.patternName || "").toLowerCase();
   if (name.includes("left")) return "formLeft";
   if (
     name.includes("center") ||
@@ -71,6 +70,14 @@ function layoutForMockup(mockup: MockupDto): SlotLayout {
   ) {
     return "formCenter";
   }
+  const formPage =
+    name.includes("form") ||
+    mockup.variant === "form" ||
+    issues.some((i) =>
+      /form|lead|email|demo|field/i.test(`${i.title} ${i.category}`)
+    );
+  if (formPage) return "formRight";
+  if (mockup.variant === "hero" || !mockup.patternName) return "hero";
   return "formRight";
 }
 
@@ -102,13 +109,28 @@ const SEVERITY_RANK: Record<IssueDto["severity"], number> = {
 
 function slotForIssue(issue: IssueDto): ChangeSlot {
   const t = `${issue.title} ${issue.category}`.toLowerCase();
-  if (/headline|h1|title|subhead|value prop|messaging|copy/i.test(t))
-    return "headline";
+  if (/headline|h1|title|subhead|value prop/i.test(t)) return "headline";
   if (/bullet|proof|benefit|trust|social|testimonial|logo/i.test(t))
     return "bullets";
-  if (/cta|button|form|email|capture|sign|demo|nav|cookie|field/i.test(t))
-    return "cta";
+  if (/\bcta\b|call to action|button label|button copy/i.test(t)) return "cta";
+  if (/form|email|field|lead capture/i.test(t)) return "cta";
   return "headline";
+}
+
+function calloutTitle(slot: ChangeSlot, issue: IssueDto): string {
+  const t = `${issue.title} ${issue.category}`.toLowerCase();
+  if (slot === "cta" && !/\bcta\b|call to action|button/i.test(t)) {
+    return issue.title;
+  }
+  return CHANGE_TITLE[slot];
+}
+
+function calloutWhat(slot: ChangeSlot, issue: IssueDto): string {
+  const t = `${issue.title} ${issue.category}`.toLowerCase();
+  if (slot === "cta" && !/\bcta\b|call to action|button/i.test(t)) {
+    return (issue.suggestedFix || issue.description || "").replace(/\s+/g, " ").trim();
+  }
+  return CHANGE_WHAT[slot];
 }
 
 function whyLine(issue: IssueDto): string {
@@ -153,8 +175,8 @@ function buildChangeCallouts(
     out.push({
       ...issue,
       id: `change-${mockupId}-${issue.id}`,
-      title: CHANGE_TITLE[slot],
-      description: CHANGE_WHAT[slot],
+      title: calloutTitle(slot, issue),
+      description: calloutWhat(slot, issue),
       whyItMatters: whyLine(issue),
       psychology: whyLine(issue),
       suggestedFix: "",
@@ -273,7 +295,12 @@ export function AnnotatedScreenshots({
     for (const m of deviceMockups) {
       map.set(
         m.id,
-        buildChangeCallouts(issues, heroCutoff, layoutForMockup(m), m.id)
+        buildChangeCallouts(
+          issues,
+          heroCutoff,
+          layoutForMockup(m, issues),
+          m.id
+        )
       );
     }
     return map;

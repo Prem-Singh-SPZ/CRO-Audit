@@ -404,7 +404,7 @@ export function collectCaptureSignalsInPage(): CaptureSignals {
  * captcha / "I am not a robot" controls. Returns true if a click happened.
  * Self-contained for page.evaluate — keep the accept regex inlined.
  */
-export function dismissConsentInPage(): boolean {
+export function dismissConsentInPage(skipOneTrustAccept?: boolean): boolean {
   const vw = window.innerWidth || 1440;
   const vh = window.innerHeight || 900;
   const isAccept = (raw: string): boolean => {
@@ -419,7 +419,11 @@ export function dismissConsentInPage(): boolean {
   const inLeadForm = (el: Element): boolean => Boolean(el.closest("form"));
 
   const known = document.querySelector("#onetrust-accept-btn-handler");
-  if (known instanceof HTMLElement && !inLeadForm(known)) {
+  if (
+    known instanceof HTMLElement &&
+    !inLeadForm(known) &&
+    !skipOneTrustAccept
+  ) {
     known.click();
     return true;
   }
@@ -1364,14 +1368,14 @@ export function hideConsentOverlaysInPage(): number {
       /cookie|consent|onetrust|gdpr|ot-sdk|privacy-banner|cookie-banner/.test(
         idc
       ) ||
-      /we value your privacy|cookie settings|accept default settings|accept recommended|manage (cookie|choices)/.test(
+      /we value your privacy|cookie settings|cookie preferences|accept all|accept default settings|accept recommended|manage (cookie|choices)/.test(
         text
       );
     if (!looksConsent) continue;
     if (/main|article/.test(idc) && !/cookie|consent|onetrust/.test(idc)) {
       continue;
     }
-    if (coverage < 0.12 || coverage > 0.92) continue;
+    if (coverage < 0.06 || coverage > 0.92) continue;
     if (containsFormOrField(el)) continue;
     hide(el);
   }

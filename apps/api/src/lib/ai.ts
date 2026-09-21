@@ -364,6 +364,7 @@ Do not give generic advice like "make the button bigger." You must analyze the c
 PILLAR 1: CLARITY & VALUE PROPOSITION (The 5-Second Test)
 - Rule: A user must understand exactly what the product/service is, who it is for, and the primary benefit within 5 seconds of landing.
 - Check for: Vague, artsy headlines; lack of a supporting subheadline; hidden primary CTAs; failure to explain the "Unique Selling Proposition" (USP) above the fold.
+- Do NOT file "missing CTA" / "no primary CTA" if the screenshot or ctaTexts already shows a Get / Demo / Start / Trial / Submit control. Critique contrast or label only when that control is actually weak.
 
 PILLAR 2: COGNITIVE FRICTION & EYEFLOW (Gestalt UX Laws)
 - Rule: Minimize the mental effort required to navigate the page. The user's eyes should flow naturally down the page toward the primary action.

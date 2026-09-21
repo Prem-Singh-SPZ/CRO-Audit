@@ -208,6 +208,63 @@ function pageStillOpen(page: Page): boolean {
   }
 }
 
+async function clearVisitorConsent(
+  page: Page,
+  skipOneTrustAccept: boolean
+): Promise<boolean> {
+  let dismissed = false;
+  const hiddenSdk = await raceTimeout(
+    page.evaluate(hideKnownConsentSdkInPage),
+    PAGE_OP_TIMEOUT_MS,
+    0
+  );
+  if (hiddenSdk > 0) dismissed = true;
+  const clicked = await raceTimeout(
+    page.evaluate(dismissConsentInPage, skipOneTrustAccept),
+    PAGE_OP_TIMEOUT_MS,
+    false
+  );
+  if (clicked) {
+    dismissed = true;
+    await sleep(350);
+  }
+  const hidden = await raceTimeout(
+    page.evaluate(hideConsentOverlaysInPage),
+    PAGE_OP_TIMEOUT_MS,
+    0
+  );
+  if (hidden > 0) dismissed = true;
+  return dismissed;
+}
+
+function debugCapture(
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown>
+): void {
+  const payload = {
+    sessionId: "a21f4c",
+    runId: "pre-fix",
+    hypothesisId,
+    location,
+    message,
+    data,
+    timestamp: Date.now(),
+  };
+  // #region agent log
+  fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": "a21f4c",
+    },
+    body: JSON.stringify(payload),
+  }).catch(() => undefined);
+  console.log("[screenshot:debug]", JSON.stringify(payload));
+  // #endregion
+}
+
 /** Scroll tops for viewport bands that tile the stitch with a small overlap. */
 /** Clamp a measured document height for a single-screen clip capture. */
 export function clampShotHeight(
@@ -438,42 +495,28 @@ async function captureScreenshotsOnce(
     }
 
     await waitUntilDocumentComplete(page);
-    await page
-      .waitForNetworkIdle({ idleTime: 800, timeout: 8000 })
-      .catch(() => {});
+    if (usesLocalChrome()) {
+      await page
+        .waitForNetworkIdle({ idleTime: 800, timeout: 8000 })
+        .catch(() => {});
+    }
 
     await waitOutAutoChallenge(page);
-    await page
-      .waitForFunction(countVisibleLeadFields, { timeout: 10_000 })
-      .catch(() => {});
+    if (usesLocalChrome()) {
+      await page
+        .waitForFunction(countVisibleLeadFields, { timeout: 10_000 })
+        .catch(() => {});
+    }
     const leadFieldsBeforeConsent = await raceTimeout(
       page.evaluate(countVisibleLeadFields),
       PAGE_OP_TIMEOUT_MS,
       0
     );
     const skipConsentClick = shouldSkipConsentClick(leadFieldsBeforeConsent);
-    // If any lead field painted, only hide the banner SDK. Clicking Accept can
-    // remount the form; progressive/autofill tools may later settle to 2 fields.
-    if (skipConsentClick) {
-      const hiddenSdk = await raceTimeout(
-        page.evaluate(hideKnownConsentSdkInPage),
-        PAGE_OP_TIMEOUT_MS,
-        0
-      );
-      if (hiddenSdk > 0) dismissedConsent = true;
-    } else {
-      dismissedConsent = await raceTimeout(
-        page.evaluate(dismissConsentInPage),
-        PAGE_OP_TIMEOUT_MS,
-        false
-      );
-      if (dismissedConsent) await sleep(400);
-      const hiddenOverlays = await raceTimeout(
-        page.evaluate(hideConsentOverlaysInPage),
-        PAGE_OP_TIMEOUT_MS,
-        0
-      );
-      if (hiddenOverlays > 0) dismissedConsent = true;
+    // Skip only the OneTrust Accept click when a lead field is already
+    // painted (Fastly remount). Still click Accept All / hide other CMPs.
+    if (await clearVisitorConsent(page, skipConsentClick)) {
+      dismissedConsent = true;
     }
     await unregisterServiceWorkers(page);
 
@@ -566,49 +609,69 @@ async function captureScreenshotsOnce(
       const html = await raceTimeout(page.content(), PAGE_OP_TIMEOUT_MS, "");
       renderedHtml = html ? html.slice(0, 2_000_000) : null;
 
-      // Fold JPEG = mockup seed only. Control / Your page is Chrome's native
-      // full-page capture after a lazy-load walk (and a second CMP hide).
       await raceTimeout(
         page.evaluate(() => window.scrollTo(0, 0)),
         PAGE_OP_TIMEOUT_MS,
         undefined
       );
       let viewportShot: Screenshot | null = null;
-      try {
-        const gateReady = await prepareViewportForShot(page);
-        if (gateReady.dismissedConsent) dismissedConsent = true;
-        viewportShot = await captureViewportJpeg(page);
-      } catch (err) {
-        console.warn(
-          "[screenshot] viewport prepare failed:",
-          (err as Error)?.message ?? err
-        );
-        if (pageStillOpen(page)) {
-          viewportShot = await captureViewportJpeg(page);
-        }
-      }
-      if (viewportShot) {
-        heroShot = viewportShot;
-        // Keep the fold immediately. A later walk crash must not leave [].
-        screenshots.push(viewportShot);
-      }
-
       let control = { shot: null as Screenshot | null, ready: false };
-      try {
-        if (pageStillOpen(page)) {
-          control = await captureControlFullPage(page);
+      if (!usesLocalChrome()) {
+        const pack = await captureServerlessControl(page);
+        if (pack.dismissedConsent) dismissedConsent = true;
+        viewportShot = pack.viewport;
+        if (viewportShot) heroShot = viewportShot;
+        if (pack.control) {
+          screenshots.push(pack.control);
+          control = { shot: pack.control, ready: true };
+        } else if (viewportShot) {
+          screenshots.push(viewportShot);
+          control = { shot: viewportShot, ready: true };
         }
-      } catch (err) {
-        console.warn(
-          "[screenshot] full-page walk failed, keeping viewport:",
-          (err as Error)?.message ?? err
-        );
+      } else {
+        try {
+          const gateReady = await prepareViewportForShot(page);
+          if (gateReady.dismissedConsent) dismissedConsent = true;
+          viewportShot = await captureViewportJpeg(page);
+        } catch (err) {
+          console.warn(
+            "[screenshot] viewport prepare failed:",
+            (err as Error)?.message ?? err
+          );
+          if (pageStillOpen(page)) {
+            viewportShot = await captureViewportJpeg(page);
+          }
+        }
+        if (viewportShot) {
+          heroShot = viewportShot;
+          screenshots.push(viewportShot);
+        }
+        try {
+          if (pageStillOpen(page)) {
+            control = await captureControlFullPage(page);
+          }
+        } catch (err) {
+          console.warn(
+            "[screenshot] full-page walk failed, keeping viewport:",
+            (err as Error)?.message ?? err
+          );
+        }
+        if (control.shot) {
+          screenshots.length = 0;
+          screenshots.push(control.shot);
+        }
       }
       const controlShot = control.shot;
-      if (controlShot) {
-        screenshots.length = 0;
-        screenshots.push(controlShot);
-      }
+      debugCapture("A", "screenshot.ts:afterControl", "control-vs-viewport", {
+        localChrome: usesLocalChrome(),
+        pageOpen: pageStillOpen(page),
+        viewport: viewportShot
+          ? { w: viewportShot.width, h: viewportShot.height }
+          : null,
+        control: controlShot
+          ? { w: controlShot.width, h: controlShot.height, ready: control.ready }
+          : { shot: false, ready: control.ready },
+      });
 
       const stitchW = controlShot?.width ?? VIEWPORT.width;
       const stitchH = controlShot?.height ?? VIEWPORT.height;
@@ -644,12 +707,11 @@ async function captureScreenshotsOnce(
       const hasCollapsedIframe = signals.formIframes.some(
         (f) => f.width >= 80 && f.height < 40
       );
-      if (!control.ready) {
+      if (!control.ready && screenshots.length === 0) {
         incompleteCapture = true;
-        captureNote = controlShot
-          ? "The viewport had not finished loading (form, images, or spinner) when we captured the page."
-          : "The full page walk did not finish; this control is the above-the-fold shot.";
-        liveUsable = screenshots.some((s) => s.device === "desktop");
+        captureNote =
+          "The viewport had not finished loading (form, images, or spinner) when we captured the page.";
+        liveUsable = false;
       } else {
         const finalized = finalizeIncompleteFlag({
           fieldsReady: true,
@@ -661,8 +723,8 @@ async function captureScreenshotsOnce(
         liveUsable = screenshots.some((s) => s.device === "desktop");
       }
 
-      // Bands for the audit model only — never sent as "Your page".
-      if (pageStillOpen(page)) {
+      // Bands walk the page with extra CDP shots. Skip on Cloud Run.
+      if (usesLocalChrome() && pageStillOpen(page)) {
         await captureBands(
           page,
           bands,
@@ -752,6 +814,14 @@ async function waitOutAutoChallenge(page: Page): Promise<void> {
 }
 
 async function waitUntilDocumentComplete(page: Page): Promise<void> {
+  if (!usesLocalChrome()) {
+    await raceTimeout(
+      page.evaluate(() => document.readyState === "complete"),
+      CONTENT_WAIT_MS,
+      false
+    );
+    return;
+  }
   await page
     .waitForFunction(() => document.readyState === "complete", {
       timeout: CONTENT_WAIT_MS,
@@ -779,48 +849,37 @@ async function prepareViewportForShot(
     undefined
   );
   await waitUntilDocumentComplete(page);
-  await page
-    .waitForNetworkIdle({ idleTime: 800, timeout: 8000 })
-    .catch(() => {});
-  await page
-    .waitForFunction(countVisibleLeadFields, { timeout: 10_000 })
-    .catch(() => {});
+  if (usesLocalChrome()) {
+    await page
+      .waitForNetworkIdle({ idleTime: 800, timeout: 8000 })
+      .catch(() => {});
+    await page
+      .waitForFunction(countVisibleLeadFields, { timeout: 10_000 })
+      .catch(() => {});
+  }
   const fieldsBefore = await raceTimeout(
     page.evaluate(countVisibleLeadFields),
     PAGE_OP_TIMEOUT_MS,
     0
   );
-  if (shouldSkipConsentClick(fieldsBefore)) {
-    const hiddenSdk = await raceTimeout(
-      page.evaluate(hideKnownConsentSdkInPage),
-      PAGE_OP_TIMEOUT_MS,
-      0
-    );
-    if (hiddenSdk > 0) dismissedConsent = true;
-  } else {
-    const clicked = await raceTimeout(
-      page.evaluate(dismissConsentInPage),
-      PAGE_OP_TIMEOUT_MS,
-      false
-    );
-    if (clicked) {
-      dismissedConsent = true;
-      await sleep(350);
-    }
-    const hidden = await raceTimeout(
-      page.evaluate(hideConsentOverlaysInPage),
-      PAGE_OP_TIMEOUT_MS,
-      0
-    );
-    if (hidden > 0) dismissedConsent = true;
+  if (await clearVisitorConsent(page, shouldSkipConsentClick(fieldsBefore))) {
+    dismissedConsent = true;
   }
   await waitForFonts(page);
   let ready = false;
-  try {
-    await page.waitForFunction(pageIsCaptureReady, { timeout: READY_WAIT_MS });
-    ready = true;
-  } catch {
-    ready = false;
+  if (usesLocalChrome()) {
+    try {
+      await page.waitForFunction(pageIsCaptureReady, { timeout: READY_WAIT_MS });
+      ready = true;
+    } catch {
+      ready = false;
+    }
+  } else {
+    ready = await raceTimeout(
+      page.evaluate(pageIsCaptureReady),
+      PAGE_OP_TIMEOUT_MS,
+      false
+    );
   }
   if (ready) {
     await waitUntilLayoutStable(page);
@@ -877,17 +936,19 @@ async function waitUntilDocumentPainted(page: Page): Promise<void> {
     8_000,
     false
   );
+  await raceTimeout(
+    page.evaluate(eagerDecodeDocumentImages),
+    PAGE_OP_TIMEOUT_MS,
+    { promoted: 0, decoded: 0, total: 0 }
+  );
+  // waitForFunction keeps a CDP binding that Cloud Run Chromium drops.
+  if (!usesLocalChrome()) return;
   await page
     .waitForFunction(pageFontsReady, { timeout: 5_000 })
     .catch(() => undefined);
   await page
     .waitForFunction(pageLeadFieldsHaveAuthorCss, { timeout: 8_000 })
     .catch(() => undefined);
-  await raceTimeout(
-    page.evaluate(eagerDecodeDocumentImages),
-    PAGE_OP_TIMEOUT_MS,
-    { promoted: 0, decoded: 0, total: 0 }
-  );
   await page
     .waitForFunction(documentImagesMostlyDecoded, { timeout: 8_000 })
     .catch(() => undefined);
@@ -1058,6 +1119,69 @@ async function capturePuppeteerFullPageJpeg(page: Page): Promise<Screenshot | nu
   };
 }
 
+async function shootControlJpeg(
+  page: Page
+): Promise<{ shot: Screenshot | null; method: string }> {
+  if (!pageStillOpen(page)) return { shot: null, method: "none" };
+  // Cloud Run: CDP first. Clip resizes the viewport and OOMs the container.
+  if (!usesLocalChrome()) {
+    let shot = await captureNativeFullPageJpeg(page);
+    if (shot) return { shot, method: "cdp" };
+    shot = await capturePuppeteerFullPageJpeg(page);
+    if (shot) return { shot, method: "fullPage" };
+    shot = await captureClippedDocumentJpeg(page);
+    if (shot) return { shot, method: "clip" };
+    return { shot: null, method: "none" };
+  }
+  let shot = await captureClippedDocumentJpeg(page);
+  if (shot) return { shot, method: "clip" };
+  shot = await captureNativeFullPageJpeg(page);
+  if (shot) return { shot, method: "cdp" };
+  shot = await capturePuppeteerFullPageJpeg(page);
+  if (shot) return { shot, method: "fullPage" };
+  return { shot: null, method: "none" };
+}
+
+/** Cloud Run: consent → fold → full JPEG. No walk, no waitForFunction. */
+async function captureServerlessControl(page: Page): Promise<{
+  viewport: Screenshot | null;
+  control: Screenshot | null;
+  dismissedConsent: boolean;
+  method: string;
+}> {
+  const dismissedConsent = await clearVisitorConsent(page, true);
+  await waitForFonts(page);
+  await raceTimeout(
+    page.evaluate(eagerDecodeDocumentImages),
+    PAGE_OP_TIMEOUT_MS,
+    { promoted: 0, decoded: 0, total: 0 }
+  );
+  await raceTimeout(
+    page.evaluate(() => window.scrollTo(0, 0)),
+    PAGE_OP_TIMEOUT_MS,
+    undefined
+  );
+  const viewport = pageStillOpen(page)
+    ? await captureViewportJpeg(page)
+    : null;
+  const taken = await shootControlJpeg(page);
+  const control = taken.shot ?? viewport;
+  debugCapture("B", "screenshot.ts:serverless", "serverless-control", {
+    method: taken.shot ? taken.method : viewport ? "viewport" : "none",
+    viewport: viewport ? { w: viewport.width, h: viewport.height } : null,
+    control: control ? { w: control.width, h: control.height } : null,
+    dismissedConsent,
+    pageOpen: pageStillOpen(page),
+    localChrome: false,
+  });
+  return {
+    viewport,
+    control,
+    dismissedConsent,
+    method: taken.shot ? taken.method : viewport ? "viewport" : "none",
+  };
+}
+
 async function walkUntilPageSettled(
   page: Page
 ): Promise<{ width: number; height: number }> {
@@ -1100,20 +1224,73 @@ async function walkUntilPageSettled(
 async function captureControlFullPage(
   page: Page
 ): Promise<{ shot: Screenshot | null; ready: boolean }> {
+  let stage = "start";
   try {
-    if (!pageStillOpen(page)) return { shot: null, ready: false };
-    await walkUntilPageSettled(page);
-    if (!pageStillOpen(page)) return { shot: null, ready: false };
-    const hidden = await raceTimeout(
-      page.evaluate(hideKnownConsentSdkInPage),
-      PAGE_OP_TIMEOUT_MS,
-      0
-    );
-    if (hidden > 0) {
-      console.log(`[screenshot] hid ${hidden} consent nodes after full-page walk`);
-      await walkUntilPageSettled(page);
+    if (!pageStillOpen(page)) {
+      debugCapture("D", "screenshot.ts:control", "early-exit", {
+        stage,
+        reason: "closed-at-start",
+        localChrome: usesLocalChrome(),
+      });
+      return { shot: null, ready: false };
     }
-    if (!pageStillOpen(page)) return { shot: null, ready: false };
+    stage = "hide";
+    await clearVisitorConsent(page, true);
+    const hidden = 0;
+    const extent = { width: VIEWPORT.width, height: VIEWPORT.height };
+    const cookie = await raceTimeout(
+      page.evaluate(() => {
+        const text = document.body?.innerText?.slice(0, 5000) ?? "";
+        const buttons = Array.from(
+          document.querySelectorAll("button, [role=button], a")
+        ).filter((el) =>
+          /accept all|reject all|manage cookies|cookie preferences/i.test(
+            (el.textContent || "").replace(/\s+/g, " ")
+          )
+        ).length;
+        return {
+          buttons,
+          cookieCopy: /cookie preferences|accept all|reject all/i.test(text),
+          overflow: getComputedStyle(document.documentElement).overflow,
+        };
+      }),
+      PAGE_OP_TIMEOUT_MS,
+      { buttons: -1, cookieCopy: false, overflow: "?" }
+    );
+    debugCapture("E", "screenshot.ts:control", "after-hide", {
+      hidden,
+      cookie,
+      extent,
+      localChrome: usesLocalChrome(),
+    });
+    if (!pageStillOpen(page)) {
+      debugCapture("A", "screenshot.ts:control", "early-exit", {
+        stage,
+        reason: "closed-after-hide",
+        localChrome: usesLocalChrome(),
+      });
+      return { shot: null, ready: false };
+    }
+    // Cloud Run: shoot before any scroll walk. The walk is what detaches the frame.
+    if (!usesLocalChrome()) {
+      stage = "shoot-first";
+      await waitUntilDocumentPainted(page);
+      const early = await shootControlJpeg(page);
+      debugCapture("B", "screenshot.ts:control", "shot-result", {
+        method: early.method,
+        fieldCount: -1,
+        gateReady: true,
+        undecode: false,
+        ready: Boolean(early.shot),
+        shot: early.shot
+          ? { w: early.shot.width, h: early.shot.height }
+          : null,
+        localChrome: false,
+        path: "shoot-first",
+      });
+      if (early.shot) return { shot: early.shot, ready: true };
+    }
+    stage = "fields";
     await raceTimeout(
       page.evaluate(() => window.scrollTo(0, 0)),
       PAGE_OP_TIMEOUT_MS,
@@ -1126,7 +1303,16 @@ async function captureControlFullPage(
       await walkUntilPageSettled(page);
       await waitUntilDocumentPainted(page);
     }
-    if (!pageStillOpen(page)) return { shot: null, ready: false };
+    if (!pageStillOpen(page)) {
+      debugCapture("A", "screenshot.ts:control", "early-exit", {
+        stage,
+        reason: "closed-after-fields",
+        fieldCount,
+        localChrome: usesLocalChrome(),
+      });
+      return { shot: null, ready: false };
+    }
+    stage = "shoot";
     const gateReady = await raceTimeout(
       page.evaluate(pageIsCaptureReady),
       PAGE_OP_TIMEOUT_MS,
@@ -1156,17 +1342,40 @@ async function captureControlFullPage(
       undefined
     );
     await waitUntilLayoutStable(page);
-    if (!pageStillOpen(page)) return { shot: null, ready: false };
-    let shot = await captureClippedDocumentJpeg(page);
-    if (!shot) shot = await captureNativeFullPageJpeg(page);
-    if (!shot) shot = await capturePuppeteerFullPageJpeg(page);
+    if (!pageStillOpen(page)) {
+      debugCapture("B", "screenshot.ts:control", "early-exit", {
+        stage,
+        reason: "closed-before-jpeg",
+        fieldCount,
+        gateReady,
+        localChrome: usesLocalChrome(),
+      });
+      return { shot: null, ready: false };
+    }
+    const taken = await shootControlJpeg(page);
+    const method = taken.method;
+    const shot = taken.shot;
     let ready = !undecode && gateReady;
     // A real desktop JPEG is enough. The style/blank probe false-fails short
     // pages (example.com) and sparse heroes; only fail when visible images
     // never decoded.
     if (!ready && !undecode && shot) ready = true;
+    debugCapture("B", "screenshot.ts:control", "shot-result", {
+      method,
+      fieldCount,
+      gateReady,
+      undecode,
+      ready,
+      shot: shot ? { w: shot.width, h: shot.height } : null,
+      localChrome: usesLocalChrome(),
+    });
     return { shot, ready };
   } catch (err) {
+    debugCapture("C", "screenshot.ts:control", "control-catch", {
+      stage,
+      message: (err as Error)?.message ?? String(err),
+      localChrome: usesLocalChrome(),
+    });
     console.warn(
       "[screenshot] control full-page failed:",
       (err as Error)?.message ?? err
