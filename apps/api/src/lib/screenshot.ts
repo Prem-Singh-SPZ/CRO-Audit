@@ -574,9 +574,9 @@ async function captureScreenshotsOnce(
       });
     }
     try {
-      // Cloud Run: commit returns before heavy JS/WASM. Local waits for DCL.
+      // Earliest Puppeteer lifecycle (Playwright's "commit" is not valid here).
       const response = await page.goto(url, {
-        waitUntil: usesLocalChrome() ? "domcontentloaded" : "commit",
+        waitUntil: "domcontentloaded",
       });
       status = response?.status() ?? 0;
     } catch (err) {
