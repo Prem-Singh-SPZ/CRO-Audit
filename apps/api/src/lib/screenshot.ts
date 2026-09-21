@@ -22,6 +22,7 @@ import {
   hideKnownConsentSdkInPage,
   imagesTooIncomplete,
   inlineZeroNaturalSvgImages,
+  isDeadPageError,
   leadFieldWaitDecision,
   pageFontsReady,
   pageIsCaptureReady,
@@ -193,6 +194,18 @@ function raceTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function usesLocalChrome(): boolean {
+  return Boolean(process.env.CHROME_EXECUTABLE_PATH?.trim());
+}
+
+function pageStillOpen(page: Page): boolean {
+  try {
+    return !page.isClosed() && !page.mainFrame().detached;
+  } catch {
+    return false;
+  }
 }
 
 /** Scroll tops for viewport bands that tile the stitch with a small overlap. */
@@ -560,38 +573,68 @@ async function captureScreenshotsOnce(
         PAGE_OP_TIMEOUT_MS,
         undefined
       );
-      const gateReady = await prepareViewportForShot(page);
-      if (gateReady.dismissedConsent) dismissedConsent = true;
-      const viewportShot = await captureViewportJpeg(page);
-      if (viewportShot) heroShot = viewportShot;
+      let viewportShot: Screenshot | null = null;
+      try {
+        const gateReady = await prepareViewportForShot(page);
+        if (gateReady.dismissedConsent) dismissedConsent = true;
+        viewportShot = await captureViewportJpeg(page);
+      } catch (err) {
+        console.warn(
+          "[screenshot] viewport prepare failed:",
+          (err as Error)?.message ?? err
+        );
+        if (pageStillOpen(page)) {
+          viewportShot = await captureViewportJpeg(page);
+        }
+      }
+      if (viewportShot) {
+        heroShot = viewportShot;
+        // Keep the fold immediately. A later walk crash must not leave [].
+        screenshots.push(viewportShot);
+      }
 
-      const control = await captureControlFullPage(page);
+      let control = { shot: null as Screenshot | null, ready: false };
+      try {
+        if (pageStillOpen(page)) {
+          control = await captureControlFullPage(page);
+        }
+      } catch (err) {
+        console.warn(
+          "[screenshot] full-page walk failed, keeping viewport:",
+          (err as Error)?.message ?? err
+        );
+      }
       const controlShot = control.shot;
       if (controlShot) {
+        screenshots.length = 0;
         screenshots.push(controlShot);
-      } else if (viewportShot) {
-        screenshots.push(viewportShot);
       }
 
       const stitchW = controlShot?.width ?? VIEWPORT.width;
       const stitchH = controlShot?.height ?? VIEWPORT.height;
-      landmarks = await measureLandmarks(
-        page,
-        stitchW,
-        stitchH,
-        PAGE_OP_TIMEOUT_MS
-      );
+      if (pageStillOpen(page)) {
+        landmarks = await measureLandmarks(
+          page,
+          stitchW,
+          stitchH,
+          PAGE_OP_TIMEOUT_MS
+        );
+      }
 
-      const signals = await raceTimeout(
-        page.evaluate(collectCaptureSignalsInPage),
-        PAGE_OP_TIMEOUT_MS,
-        emptySignals()
-      );
-      const copySample = await raceTimeout(
-        page.evaluate(() => document.body?.innerText?.slice(0, 4000) ?? ""),
-        PAGE_OP_TIMEOUT_MS,
-        ""
-      );
+      const signals = pageStillOpen(page)
+        ? await raceTimeout(
+            page.evaluate(collectCaptureSignalsInPage),
+            PAGE_OP_TIMEOUT_MS,
+            emptySignals()
+          )
+        : emptySignals();
+      const copySample = pageStillOpen(page)
+        ? await raceTimeout(
+            page.evaluate(() => document.body?.innerText?.slice(0, 4000) ?? ""),
+            PAGE_OP_TIMEOUT_MS,
+            ""
+          )
+        : "";
       const quality = assessCaptureQuality({
         signals,
         hasFormLandmark: landmarks.some((l) => l.id === "form"),
@@ -603,8 +646,9 @@ async function captureScreenshotsOnce(
       );
       if (!control.ready) {
         incompleteCapture = true;
-        captureNote =
-          "The viewport had not finished loading (form, images, or spinner) when we captured the page.";
+        captureNote = controlShot
+          ? "The viewport had not finished loading (form, images, or spinner) when we captured the page."
+          : "The full page walk did not finish; this control is the above-the-fold shot.";
         liveUsable = screenshots.some((s) => s.device === "desktop");
       } else {
         const finalized = finalizeIncompleteFlag({
@@ -618,11 +662,13 @@ async function captureScreenshotsOnce(
       }
 
       // Bands for the audit model only — never sent as "Your page".
-      await captureBands(
-        page,
-        bands,
-        Math.max(1, Math.floor(stitchH || VIEWPORT.height))
-      );
+      if (pageStillOpen(page)) {
+        await captureBands(
+          page,
+          bands,
+          Math.max(1, Math.floor(stitchH || VIEWPORT.height))
+        );
+      }
     }
 
     if (
@@ -659,6 +705,9 @@ async function captureScreenshotsOnce(
   } catch (err) {
     console.error("[screenshot] capture failed:", (err as Error)?.message ?? err);
     console.error("[screenshot] stack:", (err as Error)?.stack);
+    if (isDeadPageError(err) && screenshots.length === 0 && heroShot) {
+      screenshots.push(heroShot);
+    }
   } finally {
     if (browser) await browser.close().catch(() => {});
     releaseSlot();
@@ -822,6 +871,7 @@ async function waitUntilLeadFieldsStable(page: Page): Promise<number> {
 
 /** Fonts, optional form CSS, then laid-out images — same path for every URL. */
 async function waitUntilDocumentPainted(page: Page): Promise<void> {
+  if (!pageStillOpen(page)) return;
   await raceTimeout(
     page.evaluate(() => document.fonts.ready.then(() => true)),
     8_000,
@@ -1011,90 +1061,118 @@ async function capturePuppeteerFullPageJpeg(page: Page): Promise<Screenshot | nu
 async function walkUntilPageSettled(
   page: Page
 ): Promise<{ width: number; height: number }> {
-  const first = await raceTimeout(
-    page.evaluate(measurePageExtent),
-    PAGE_OP_TIMEOUT_MS,
-    { width: VIEWPORT.width, height: VIEWPORT.height }
-  );
-  await scrollThrough(page, Math.max(1, first.height));
-  const second = await raceTimeout(
-    page.evaluate(measurePageExtent),
-    PAGE_OP_TIMEOUT_MS,
-    first
-  );
-  if (second.height > first.height) {
-    await scrollThrough(page, second.height);
-    return raceTimeout(
+  const fallback = { width: VIEWPORT.width, height: VIEWPORT.height };
+  if (!pageStillOpen(page)) return fallback;
+  try {
+    const first = await raceTimeout(
       page.evaluate(measurePageExtent),
       PAGE_OP_TIMEOUT_MS,
-      second
+      fallback
     );
+    await scrollThrough(page, Math.max(1, first.height));
+    if (!pageStillOpen(page)) return first;
+    const second = await raceTimeout(
+      page.evaluate(measurePageExtent),
+      PAGE_OP_TIMEOUT_MS,
+      first
+    );
+    if (second.height > first.height && pageStillOpen(page)) {
+      await scrollThrough(page, second.height);
+      if (!pageStillOpen(page)) return second;
+      return raceTimeout(
+        page.evaluate(measurePageExtent),
+        PAGE_OP_TIMEOUT_MS,
+        second
+      );
+    }
+    return second;
+  } catch (err) {
+    if (!isDeadPageError(err)) {
+      console.warn(
+        "[screenshot] page walk failed:",
+        (err as Error)?.message ?? err
+      );
+    }
+    return fallback;
   }
-  return second;
 }
 
 async function captureControlFullPage(
   page: Page
 ): Promise<{ shot: Screenshot | null; ready: boolean }> {
-  await walkUntilPageSettled(page);
-  const hidden = await raceTimeout(
-    page.evaluate(hideKnownConsentSdkInPage),
-    PAGE_OP_TIMEOUT_MS,
-    0
-  );
-  if (hidden > 0) {
-    console.log(`[screenshot] hid ${hidden} consent nodes after full-page walk`);
+  try {
+    if (!pageStillOpen(page)) return { shot: null, ready: false };
     await walkUntilPageSettled(page);
-  }
-  await raceTimeout(
-    page.evaluate(() => window.scrollTo(0, 0)),
-    PAGE_OP_TIMEOUT_MS,
-    undefined
-  );
-  const fieldCount = await waitUntilLeadFieldsStable(page);
-  await waitUntilDocumentPainted(page);
-  if (fieldCount > 0) {
-    await walkUntilPageSettled(page);
+    if (!pageStillOpen(page)) return { shot: null, ready: false };
+    const hidden = await raceTimeout(
+      page.evaluate(hideKnownConsentSdkInPage),
+      PAGE_OP_TIMEOUT_MS,
+      0
+    );
+    if (hidden > 0) {
+      console.log(`[screenshot] hid ${hidden} consent nodes after full-page walk`);
+      await walkUntilPageSettled(page);
+    }
+    if (!pageStillOpen(page)) return { shot: null, ready: false };
+    await raceTimeout(
+      page.evaluate(() => window.scrollTo(0, 0)),
+      PAGE_OP_TIMEOUT_MS,
+      undefined
+    );
+    const fieldCount = await waitUntilLeadFieldsStable(page);
     await waitUntilDocumentPainted(page);
+    // Extra remount walk is local-only. Cloud Run Chromium dies on long walks.
+    if (fieldCount > 0 && usesLocalChrome()) {
+      await walkUntilPageSettled(page);
+      await waitUntilDocumentPainted(page);
+    }
+    if (!pageStillOpen(page)) return { shot: null, ready: false };
+    const gateReady = await raceTimeout(
+      page.evaluate(pageIsCaptureReady),
+      PAGE_OP_TIMEOUT_MS,
+      false
+    );
+    const afterSettle = await raceTimeout(
+      page.evaluate(collectImageLoadInventory),
+      PAGE_OP_TIMEOUT_MS,
+      null
+    );
+    const undecode = imagesTooIncomplete(afterSettle);
+    await raceTimeout(
+      page.evaluate(() =>
+        window.scrollTo(0, document.documentElement.scrollHeight)
+      ),
+      PAGE_OP_TIMEOUT_MS,
+      undefined
+    );
+    await raceTimeout(
+      page.evaluate(inlineZeroNaturalSvgImages),
+      PAGE_OP_TIMEOUT_MS,
+      0
+    );
+    await raceTimeout(
+      page.evaluate(() => window.scrollTo(0, 0)),
+      PAGE_OP_TIMEOUT_MS,
+      undefined
+    );
+    await waitUntilLayoutStable(page);
+    if (!pageStillOpen(page)) return { shot: null, ready: false };
+    let shot = await captureClippedDocumentJpeg(page);
+    if (!shot) shot = await captureNativeFullPageJpeg(page);
+    if (!shot) shot = await capturePuppeteerFullPageJpeg(page);
+    let ready = !undecode && gateReady;
+    // A real desktop JPEG is enough. The style/blank probe false-fails short
+    // pages (example.com) and sparse heroes; only fail when visible images
+    // never decoded.
+    if (!ready && !undecode && shot) ready = true;
+    return { shot, ready };
+  } catch (err) {
+    console.warn(
+      "[screenshot] control full-page failed:",
+      (err as Error)?.message ?? err
+    );
+    return { shot: null, ready: false };
   }
-  const gateReady = await raceTimeout(
-    page.evaluate(pageIsCaptureReady),
-    PAGE_OP_TIMEOUT_MS,
-    false
-  );
-  const afterSettle = await raceTimeout(
-    page.evaluate(collectImageLoadInventory),
-    PAGE_OP_TIMEOUT_MS,
-    null
-  );
-  const undecode = imagesTooIncomplete(afterSettle);
-  await raceTimeout(
-    page.evaluate(() =>
-      window.scrollTo(0, document.documentElement.scrollHeight)
-    ),
-    PAGE_OP_TIMEOUT_MS,
-    undefined
-  );
-  await raceTimeout(
-    page.evaluate(inlineZeroNaturalSvgImages),
-    PAGE_OP_TIMEOUT_MS,
-    0
-  );
-  await raceTimeout(
-    page.evaluate(() => window.scrollTo(0, 0)),
-    PAGE_OP_TIMEOUT_MS,
-    undefined
-  );
-  await waitUntilLayoutStable(page);
-  let shot = await captureClippedDocumentJpeg(page);
-  if (!shot) shot = await captureNativeFullPageJpeg(page);
-  if (!shot) shot = await capturePuppeteerFullPageJpeg(page);
-  let ready = !undecode && gateReady;
-  // A real desktop JPEG is enough. The style/blank probe false-fails short
-  // pages (example.com) and sparse heroes; only fail when visible images
-  // never decoded.
-  if (!ready && !undecode && shot) ready = true;
-  return { shot, ready };
 }
 
 /** Full-page Wayback replay. Never used to evade a live wall. */
@@ -1180,33 +1258,62 @@ function measurePageExtent(): { width: number; height: number } {
 }
 
 async function waitInViewImages(page: Page): Promise<void> {
-  await page
-    .waitForFunction(() => {
-      const vh = window.innerHeight || 900;
-      for (const img of Array.from(document.images)) {
-        const r = img.getBoundingClientRect();
-        if (r.width < 24 && r.height < 16) continue;
-        if (r.bottom < 0 || r.top > vh) continue;
-        const src = (img.currentSrc || img.src || "").toLowerCase();
-        const svg =
-          img.complete &&
-          (/\.svg(\?|#|$)/.test(src) || src.startsWith("data:image/svg"));
-        if ((img.complete && img.naturalWidth > 20) || svg) continue;
-        return false;
-      }
-      return true;
-    }, { timeout: 2500 })
-    .catch(() => {});
+  if (!pageStillOpen(page)) return;
+  // waitForFunction keeps a CDP binding open. On Cloud Run that binding
+  // throws "detached Frame" when Sparticuz Chromium dies mid-scroll.
+  if (!usesLocalChrome()) {
+    await sleep(120);
+    return;
+  }
+  try {
+    await raceTimeout(
+      page
+        .waitForFunction(() => {
+          const vh = window.innerHeight || 900;
+          for (const img of Array.from(document.images)) {
+            const r = img.getBoundingClientRect();
+            if (r.width < 24 && r.height < 16) continue;
+            if (r.bottom < 0 || r.top > vh) continue;
+            const src = (img.currentSrc || img.src || "").toLowerCase();
+            const svg =
+              img.complete &&
+              (/\.svg(\?|#|$)/.test(src) || src.startsWith("data:image/svg"));
+            if ((img.complete && img.naturalWidth > 20) || svg) continue;
+            return false;
+          }
+          return true;
+        }, { timeout: 2500 })
+        .then(() => undefined),
+      2_600,
+      undefined
+    );
+  } catch {
+    /* walk must never abort the control shot */
+  }
 }
 
 async function scrollThrough(page: Page, maxY: number): Promise<void> {
+  const cap = usesLocalChrome()
+    ? maxY
+    : Math.min(maxY, VIEWPORT.height * 4);
   let y = 0;
-  while (y < maxY) {
-    await raceTimeout(page.evaluate((top) => window.scrollTo(0, top), y), PAGE_OP_TIMEOUT_MS, undefined);
+  while (y < cap) {
+    if (!pageStillOpen(page)) return;
+    await raceTimeout(
+      page.evaluate((top) => window.scrollTo(0, top), y),
+      PAGE_OP_TIMEOUT_MS,
+      undefined
+    );
     await waitInViewImages(page);
     y += BAND_STEP;
   }
-  await raceTimeout(page.evaluate(() => window.scrollTo(0, 0)), PAGE_OP_TIMEOUT_MS, undefined);
+  if (pageStillOpen(page)) {
+    await raceTimeout(
+      page.evaluate(() => window.scrollTo(0, 0)),
+      PAGE_OP_TIMEOUT_MS,
+      undefined
+    );
+  }
 }
 
 async function captureBands(

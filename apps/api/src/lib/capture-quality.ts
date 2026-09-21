@@ -35,6 +35,14 @@ export interface ScreenshotCaptureFlags {
   liveTest?: { vendor: string } | null;
 }
 
+/** CDP died mid-walk — keep any JPEG we already have instead of aborting. */
+export function isDeadPageError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return /detached frame|target closed|session closed|connection closed|browser has been closed|protocol error/i.test(
+    msg
+  );
+}
+
 /** Retry only when the first pass produced no desktop shot and was not a hard wall. */
 export function shouldRetryCapture(shot: {
   screenshots: { device: string }[];

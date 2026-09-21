@@ -15,6 +15,7 @@ import {
   layoutSnapshotsEqual,
   isConsentAcceptLabel,
   isLiveCaptureUsable,
+  isDeadPageError,
   isNearWhiteLuma,
   leadFieldWaitDecision,
   shouldHideConsentNode,
@@ -188,6 +189,18 @@ describe("applyCaptureOutcome", () => {
       liveTest: { vendor: "Spiralyze" },
     });
     expect(blocked.liveTest).toBeUndefined();
+  });
+});
+
+describe("isDeadPageError", () => {
+  it("matches detached-frame and target-closed CDP failures", () => {
+    expect(
+      isDeadPageError(new Error("Attempted to use detached Frame"))
+    ).toBe(true);
+    expect(isDeadPageError(new Error("Protocol error: Target closed"))).toBe(
+      true
+    );
+    expect(isDeadPageError(new Error("Navigation timeout"))).toBe(false);
   });
 });
 
