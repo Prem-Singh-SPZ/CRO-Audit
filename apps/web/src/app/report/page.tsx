@@ -94,6 +94,7 @@ export default function ReportPage() {
                 host: safeHost(data.scan.url),
                 rotateSeed: `${safeHost(data.scan.url)}:${data.scan.id}`,
                 primaryBottleneck: data.report.primaryBottleneck || undefined,
+                leadForm: data.mockupSeed!.leadForm,
                 issues: data.issues.map((i) => ({
                   severity: i.severity,
                   category: i.category,

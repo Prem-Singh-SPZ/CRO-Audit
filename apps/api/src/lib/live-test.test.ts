@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { detectLiveTestFromHtml, urlForcesOriginalControl } from "./live-test";
+import {
+  detectLiveTestFromHtml,
+  liveTestVendorAfterOptOut,
+  urlForcesOriginalControl,
+} from "./live-test";
 
 describe("detectLiveTestFromHtml", () => {
   it("detects Spiralyze from a script URL", () => {
@@ -51,6 +55,27 @@ describe("detectLiveTestFromHtml", () => {
       urlForcesOriginalControl("https://www.maxio.com/?varify-preview=4821")
     ).toBe(false);
     expect(urlForcesOriginalControl("https://www.maxio.com/")).toBe(false);
+  });
+
+  it("does not let a Varify preview hide a different tool's live test", () => {
+    expect(
+      liveTestVendorAfterOptOut(
+        ["Spiralyze"],
+        "https://www.sailpoint.com/?varify-preview=original"
+      )
+    ).toBe("Spiralyze");
+    expect(
+      liveTestVendorAfterOptOut(
+        ["Varify"],
+        "https://www.maxio.com/?varify-preview=original"
+      )
+    ).toBeNull();
+    expect(
+      liveTestVendorAfterOptOut(
+        ["Varify", "Spiralyze"],
+        "https://www.example.com/?varify-preview=original"
+      )
+    ).toBe("Spiralyze");
   });
 
   it("recognizes other tools' opt-out params", () => {

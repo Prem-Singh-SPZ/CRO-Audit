@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { isFormFirstPage, mockupSkipReason } from "./mockup";
+import { isFormFirstPage, leadFormBrief, mockupSkipReason } from "./mockup";
 
 describe("mockupSkipReason", () => {
   const prevKey = process.env.GEMINI_API_KEY;
@@ -46,6 +46,27 @@ describe("isFormFirstPage", () => {
     ).toBe(true);
   });
 
+  it("treats a measured form as form-first even when the issues never mention one", () => {
+    expect(
+      isFormFirstPage(
+        [
+          {
+            severity: "HIGH",
+            category: "Clarity",
+            title: "Hero Headline",
+            description: "Vague curiosity-gap headline.",
+          },
+        ],
+        {
+          present: true,
+          source: "fields",
+          fields: ["Business email"],
+          submitLabel: "Get a demo",
+        }
+      )
+    ).toBe(true);
+  });
+
   it("does not flag a marketing-hero-only brief", () => {
     expect(
       isFormFirstPage([
@@ -57,5 +78,28 @@ describe("isFormFirstPage", () => {
         },
       ])
     ).toBe(false);
+  });
+
+  it("lists only the fields read from the DOM", () => {
+    const brief = leadFormBrief({
+      present: true,
+      source: "fields",
+      fields: ["Business email"],
+      submitLabel: "Get a demo",
+    });
+    expect(brief).toContain("1. Business email");
+    expect(brief).not.toMatch(/\n2\./);
+    expect(brief).toContain('The only button on the form is "Get a demo"');
+  });
+
+  it("does not name fields when only an iframe was found", () => {
+    const brief = leadFormBrief({
+      present: true,
+      source: "iframe",
+      fields: [],
+      submitLabel: null,
+    });
+    expect(brief).toMatch(/Do NOT invent or append inputs/);
+    expect(brief).not.toMatch(/^\d+\. /m);
   });
 });

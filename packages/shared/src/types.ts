@@ -64,12 +64,23 @@ export type MockupRegions = Partial<
   Record<"headline" | "bullets" | "cta", MockupRegionBox>
 >;
 
+/** Lead form measured in the rendered DOM, including when a layer covers it. */
+export interface LeadFormSignal {
+  present: boolean;
+  /** "fields" when labels were read; "iframe" when only an embed was found. */
+  source: "fields" | "iframe" | null;
+  /** Labels in DOM order. Empty when the fields live in an unreadable iframe. */
+  fields: string[];
+  submitLabel: string | null;
+}
+
 // The compact seed the report page posts to /api/mockup to generate the "after"
 // concept out-of-band (so the slow image model never blocks the main audit).
 export interface MockupSeed {
   // Raw base64 (no data-URI prefix) of the above-the-fold hero capture.
   image: string;
   mimeType: string;
+  leadForm?: LeadFormSignal;
 }
 
 export interface IssueDto {
@@ -170,6 +181,7 @@ export interface MockupRequestDto {
   // Host + scan id (or similar) so each audit rotates to the next pattern pair.
   rotateSeed?: string;
   primaryBottleneck?: string;
+  leadForm?: LeadFormSignal;
   issues: {
     severity: string;
     category: string;

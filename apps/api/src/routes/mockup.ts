@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 
 import type {
+  LeadFormSignal,
   MockupDto,
   MockupFailureReason,
   MockupRequestDto,
@@ -9,6 +10,33 @@ import type {
 } from "@cro/shared";
 import { generateFixMockups, mockupSkipReason } from "../lib/mockup";
 import { getClientIp, rateLimit, RATE_LIMITS } from "../lib/rate-limit";
+
+function parseLeadForm(raw: unknown): LeadFormSignal | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Partial<LeadFormSignal>;
+  if (o.present !== true) return undefined;
+  const source = o.source === "fields" || o.source === "iframe" ? o.source : null;
+  const fields =
+    source === "iframe"
+      ? []
+      : Array.isArray(o.fields)
+        ? o.fields
+            .filter((f): f is string => typeof f === "string")
+            .map((f) => f.replace(/\s+/g, " ").trim().slice(0, 80))
+            .filter(Boolean)
+            .slice(0, 16)
+        : [];
+  const submit =
+    typeof o.submitLabel === "string"
+      ? o.submitLabel.replace(/\s+/g, " ").trim().slice(0, 80)
+      : "";
+  return {
+    present: true,
+    source: source ?? (fields.length > 0 ? "fields" : "iframe"),
+    fields,
+    submitLabel: source === "iframe" || !submit ? null : submit,
+  };
+}
 
 const mockup = new Hono();
 
@@ -87,6 +115,7 @@ mockup.post("/", async (c) => {
       primaryBottleneck: body.primaryBottleneck
         ? String(body.primaryBottleneck)
         : undefined,
+      leadForm: parseLeadForm(body.leadForm),
       issues,
     });
 

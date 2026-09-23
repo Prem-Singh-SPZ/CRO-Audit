@@ -4,6 +4,7 @@ export interface LiveTestHit {
 
 export interface LiveTestInspectResult {
   vendor: string | null;
+  vendors?: string[];
   hidden: number;
 }
 
@@ -76,14 +77,14 @@ const VENDORS: {
   },
 ];
 
-/** Query params that force the original control instead of a variant. */
-const FORCE_ORIGINAL_PARAMS: { name: string; value?: RegExp }[] = [
-  { name: "varify-preview", value: /^original$/i },
-  { name: "optimizely_opt_out" },
-  { name: "optimizely_disable" },
-  { name: "vwo_opt_out" },
-  { name: "convert_optout" },
-  { name: "_conv_disable" },
+/** Query params that force one tool's original control. They do not opt out other tools. */
+const FORCE_ORIGINAL_PARAMS: { name: string; value?: RegExp; vendor: string }[] = [
+  { name: "varify-preview", value: /^original$/i, vendor: "Varify" },
+  { name: "optimizely_opt_out", vendor: "Optimizely" },
+  { name: "optimizely_disable", vendor: "Optimizely" },
+  { name: "vwo_opt_out", vendor: "VWO" },
+  { name: "convert_optout", vendor: "Convert" },
+  { name: "_conv_disable", vendor: "Convert" },
 ];
 
 /**
@@ -91,25 +92,42 @@ const FORCE_ORIGINAL_PARAMS: { name: string; value?: RegExp }[] = [
  * original page. A variation id (varify-preview=123) is still a test.
  */
 export function urlForcesOriginalControl(url: string): boolean {
+  return optedOutVendors(url).length > 0;
+}
+
+/** Vendors whose original control this URL asks for. Other vendors are unchanged. */
+export function optedOutVendors(url: string): string[] {
   let params: URLSearchParams;
   try {
     params = new URL(url).searchParams;
   } catch {
-    return false;
+    return [];
   }
   const entries = [...params.entries()];
+  const vendors: string[] = [];
   for (const rule of FORCE_ORIGINAL_PARAMS) {
     const raw = entries.find(
       ([key]) => key.toLowerCase() === rule.name
     )?.[1];
     if (raw == null) continue;
-    if (!rule.value) {
-      if (!/^(0|false|no|off)$/i.test(raw)) return true;
-      continue;
-    }
-    if (rule.value.test(raw)) return true;
+    const matches = rule.value
+      ? rule.value.test(raw)
+      : !/^(0|false|no|off)$/i.test(raw);
+    if (matches && !vendors.includes(rule.vendor)) vendors.push(rule.vendor);
   }
-  return false;
+  return vendors;
+}
+
+/**
+ * A preview param only clears the tool it names. Spiralyze still running
+ * under `varify-preview=original` is a live test.
+ */
+export function liveTestVendorAfterOptOut(
+  detected: string[],
+  ...urls: string[]
+): string | null {
+  const opted = new Set(urls.flatMap(optedOutVendors));
+  return detected.find((vendor) => !opted.has(vendor)) ?? null;
 }
 
 /**
@@ -246,7 +264,7 @@ export function inspectAndHideLiveTestInPage(): LiveTestInspectResult {
     Varify: ["varify"],
   };
 
-  let vendor: string | null = null;
+  const found: string[] = [];
   for (const v of vendors) {
     const keys = globalKeys[v.vendor] ?? [];
     const hasGlobal = keys.some((k) => {
@@ -262,10 +280,10 @@ export function inspectAndHideLiveTestInPage(): LiveTestInspectResult {
       v.global.test(scriptBodies) ||
       hasGlobal
     ) {
-      vendor = v.vendor;
-      break;
+      if (!found.includes(v.vendor)) found.push(v.vendor);
     }
   }
+  const vendor = found[0] ?? null;
 
   const hideSelectors = [
     '[class*="spz-preview"]',
@@ -313,5 +331,5 @@ export function inspectAndHideLiveTestInPage(): LiveTestInspectResult {
       });
   }
 
-  return { vendor, hidden };
+  return { vendor, vendors: found, hidden };
 }

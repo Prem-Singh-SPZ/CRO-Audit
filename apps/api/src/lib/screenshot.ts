@@ -1,10 +1,11 @@
 import chromium from "@sparticuz/chromium";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 
-import type { LandmarkBox } from "@cro/shared";
+import type { LandmarkBox, LeadFormSignal } from "@cro/shared";
 import { detectChallenge, isAutoClearingChallenge } from "./challenge";
 import { assertSafeExternalUrl, isBlockedUrlSync } from "./net-guard";
 import { measureLandmarks } from "./landmarks";
+import { emptyLeadForm, preferLeadForm, readLeadFormInPage } from "./lead-form";
 import {
   assessCaptureQuality,
   collectCaptureSignalsInPage,
@@ -33,6 +34,7 @@ import {
 import { jpegDimensions } from "./jpeg-size";
 import {
   inspectAndHideLiveTestInPage,
+  liveTestVendorAfterOptOut,
   urlForcesOriginalControl,
 } from "./live-test";
 import {
@@ -100,6 +102,8 @@ export interface ScreenshotResult {
   liveUsable: boolean;
   screenshotSource: "live" | "archive";
   archiveCapturedAt: string | null;
+  /** Lead form in the rendered DOM, including fields a covering layer hides. */
+  leadForm: LeadFormSignal;
 }
 
 const DESKTOP_UA =
@@ -310,6 +314,9 @@ async function openCaptureTab(
       !usesLocalChrome() &&
       shouldAbortHeavyCaptureRequest(href, req.resourceType(), pageHost)
     ) {
+      // #region agent log
+      if (/varify/i.test(href)) fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"pre-fix",hypothesisId:"D",location:"screenshot.ts:abort",message:"aborted varify request",data:{resourceType:req.resourceType()},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       req.abort().catch(() => {});
       return;
     }
@@ -407,6 +414,7 @@ function emptyResult(
     liveUsable: false,
     screenshotSource: "live",
     archiveCapturedAt: null,
+    leadForm: emptyLeadForm(),
     ...extra,
   };
 }
@@ -521,6 +529,7 @@ async function captureScreenshotsOnce(
   let liveUsable = false;
   let screenshotSource: "live" | "archive" = "live";
   let archiveCapturedAt: string | null = null;
+  let leadForm: LeadFormSignal = emptyLeadForm();
   let browser: Browser | null = null;
   let desktopUa = DESKTOP_UA;
 
@@ -540,6 +549,9 @@ async function captureScreenshotsOnce(
     // A force-original preview param only works if the testing snippet runs.
     const forceOriginal = urlForcesOriginalControl(url);
     const firstJs = usesLocalChrome() || forceOriginal;
+    // #region agent log
+    fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"pre-fix",hypothesisId:"C",location:"screenshot.ts:before-goto",message:"capture navigation setup",data:{search:(()=>{try{return new URL(url).search}catch{return ""}})(),forceOriginal,firstJs,localChrome:usesLocalChrome()},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     const page = await openCaptureTab(browser, url, desktopUa, firstJs);
 
     let status = 0;
@@ -548,6 +560,9 @@ async function captureScreenshotsOnce(
         waitUntil: "domcontentloaded",
       });
       status = response?.status() ?? 0;
+      // #region agent log
+      fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"pre-fix",hypothesisId:"B",location:"screenshot.ts:after-goto",message:"landed url after first navigation",data:{status,landedSearch:(()=>{try{return new URL(page.url()).search}catch{return ""}})(),redirects:(response?.request().redirectChain()??[]).map((r)=>{try{return new URL(r.url()).search}catch{return r.url().slice(0,80)}})},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
     } catch (err) {
       console.warn("[screenshot] navigation issue (continuing):", err);
     }
@@ -582,12 +597,21 @@ async function captureScreenshotsOnce(
       try {
         const upgrade = await openCaptureTab(browser, url, desktopUa, true);
         try {
-          await upgrade.goto(url, { waitUntil: "domcontentloaded" });
+          const upgradeResponse = await upgrade.goto(url, { waitUntil: "domcontentloaded" });
+          // #region agent log
+          fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"pre-fix",hypothesisId:"C",location:"screenshot.ts:js-upgrade",message:"js upgrade navigation",data:{landedSearch:(()=>{try{return new URL(upgrade.url()).search}catch{return ""}})(),status:upgradeResponse?.status()??0},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
           const pack = await captureServerlessControl(upgrade);
           if (pack.control) {
             screenshots.length = 0;
             screenshots.push(pack.control);
             heroShot = pack.viewport ?? pack.control;
+            const fromJs = await raceTimeout(
+              upgrade.evaluate(readLeadFormInPage),
+              PAGE_OP_TIMEOUT_MS,
+              emptyLeadForm()
+            );
+            leadForm = preferLeadForm(leadForm, fromJs);
           }
         } finally {
           await upgrade.close().catch(() => {});
@@ -690,6 +714,41 @@ async function captureScreenshotsOnce(
     }
 
     if (!blockedReason) {
+      // #region agent log
+      const experimentProbe = await raceTimeout(
+        page.evaluate(() => {
+          const hosts = Array.from(document.scripts)
+            .map((s) => s.src)
+            .filter(Boolean)
+            .map((src) => {
+              try {
+                return new URL(src).hostname;
+              } catch {
+                return "";
+              }
+            })
+            .filter((host) => /varify|spiralyze|spz|optimizely|vwo|convert/i.test(host));
+          const body = Array.from(document.scripts)
+            .map((s) => s.textContent || "")
+            .join("\n");
+          return {
+            search: location.search,
+            hosts: hosts.slice(0, 8),
+            globals: ["spz", "Spiralyze", "__SPZ__", "varify"].filter(
+              (key) => (window as unknown as Record<string, unknown>)[key] != null
+            ),
+            spzNodes: document.querySelectorAll("[class*='spz' i], [id*='spz' i]").length,
+            varifyNodes: document.querySelectorAll("[class*='varify' i], [id*='varify' i]").length,
+            bodyMentionsSpiralyze: /spiralyze/i.test(body),
+            bodyMentionsVarify: /varify/i.test(body),
+            h1: (document.querySelector("h1")?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80),
+          };
+        }),
+        PAGE_OP_TIMEOUT_MS,
+        null
+      );
+      fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"post-fix",hypothesisId:"F",location:"screenshot.ts:experiment-probe",message:"what marked the page as a live test",data:experimentProbe,timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       const live = await raceTimeout(
         page.evaluate(inspectAndHideLiveTestInPage),
         PAGE_OP_TIMEOUT_MS,
@@ -697,14 +756,26 @@ async function captureScreenshotsOnce(
       );
       const forcedOriginal =
         forceOriginal || urlForcesOriginalControl(finalUrl);
-      if (live.vendor && !forcedOriginal) {
-        liveTest = { vendor: live.vendor };
+      const detected = live.vendors?.length
+        ? live.vendors
+        : live.vendor
+          ? [live.vendor]
+          : [];
+      const stillRunning = liveTestVendorAfterOptOut(detected, url, finalUrl);
+      // #region agent log
+      fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"pre-fix",hypothesisId:"E",location:"screenshot.ts:live-test",message:"live test decision",data:{vendor:live.vendor,forcedOriginal,finalSearch:(()=>{try{return new URL(finalUrl).search}catch{return ""}})()},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      // #region agent log
+      fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"post-fix",hypothesisId:"E",location:"screenshot.ts:live-test-remaining",message:"vendor after opt-out",data:{detected,stillRunning},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      if (stillRunning) {
+        liveTest = { vendor: stillRunning };
         console.log(
-          `[screenshot] live test ${live.vendor} (hid ${live.hidden} chrome nodes)`
+          `[screenshot] live test ${stillRunning} (hid ${live.hidden} chrome nodes)`
         );
-      } else if (live.vendor && forcedOriginal) {
+      } else if (detected.length > 0) {
         console.log(
-          `[screenshot] ${live.vendor} present but URL forces the original control`
+          `[screenshot] ${detected.join(", ")} present but URL forces that tool's original control`
         );
       }
 
@@ -792,6 +863,12 @@ async function captureScreenshotsOnce(
           stitchH,
           PAGE_OP_TIMEOUT_MS
         );
+        const measured = await raceTimeout(
+          page.evaluate(readLeadFormInPage),
+          PAGE_OP_TIMEOUT_MS,
+          emptyLeadForm()
+        );
+        leadForm = preferLeadForm(leadForm, measured);
       }
 
       const signals = pageStillOpen(page)
@@ -872,6 +949,12 @@ async function captureScreenshotsOnce(
             archive.shot.height,
             PAGE_OP_TIMEOUT_MS
           );
+          const measured = await raceTimeout(
+            page.evaluate(readLeadFormInPage),
+            PAGE_OP_TIMEOUT_MS,
+            emptyLeadForm()
+          );
+          leadForm = preferLeadForm(leadForm, measured);
           console.log(
             `[screenshot] using archive snapshot ${hit.timestamp} for ${url}`
           );
@@ -922,6 +1005,7 @@ async function captureScreenshotsOnce(
     liveUsable,
     screenshotSource,
     archiveCapturedAt,
+    leadForm,
   };
 }
 

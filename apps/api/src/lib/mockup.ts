@@ -1,8 +1,12 @@
 import { sanitizeUntrustedText } from "./sanitize";
 import {
+  FORM_FIX_PATTERNS,
+  formPatternStats,
+  hashSeed,
   pickRotatingFormPatterns,
   safeHost,
   type FormFixPattern,
+  type LeadFormSignal,
   type MockupFailureReason,
   type MockupRegions,
   type MockupRegionBox,
@@ -40,6 +44,8 @@ export interface MockupInput {
   host: string;
   rotateSeed?: string;
   primaryBottleneck?: string;
+  /** Measured in the rendered DOM. Closed field list — do not extend it. */
+  leadForm?: LeadFormSignal | null;
   issues: MockupIssueBrief[];
 }
 
@@ -66,8 +72,43 @@ const TIMEOUT_MS = 90_000;
  * Best-effort: returns null on any misconfiguration/error/timeout so the report
  * always renders (with just the annotated "before") even with zero image keys.
  */
-export function isFormFirstPage(issues: MockupIssueBrief[]): boolean {
-  return isFormFirst(issues);
+export function isFormFirstPage(
+  issues: MockupIssueBrief[],
+  leadForm?: LeadFormSignal | null
+): boolean {
+  return isFormFirst(issues, leadForm);
+}
+
+/** Layout briefs that tell the image model to add fields the page does not have. */
+const PATTERNS_THAT_ADD_FIELDS = new Set([
+  "Longform Baseline",
+  "Pre-filled Text Box",
+  "Multi-step Forms",
+]);
+
+function patternsFor(input: MockupInput): Array<
+  FormFixPattern & { uplift?: number; winRate?: number; sampleSize?: number }
+> {
+  if (!isFormFirst(input.issues, input.leadForm)) return [HERO_PATTERN];
+  // A measured form has a closed field list. Skip briefs that ask for extra
+  // inputs (6–10 fields, sample name/email/company/phone, or a padded step).
+  const closedList = input.leadForm?.present === true;
+  if (!closedList) {
+    return pickRotatingFormPatterns(
+      input.rotateSeed || `${input.host}:${Date.now()}`,
+      2
+    );
+  }
+  const list = FORM_FIX_PATTERNS.filter(
+    (p) => !PATTERNS_THAT_ADD_FIELDS.has(p.name)
+  );
+  if (list.length === 0) return [HERO_PATTERN];
+  const seed = input.rotateSeed || `${input.host}:${Date.now()}`;
+  const start = hashSeed(seed) % list.length;
+  return Array.from({ length: Math.min(2, list.length) }, (_, i) => {
+    const pattern = list[(start + i) % list.length];
+    return { ...pattern, ...formPatternStats(pattern.name) };
+  });
 }
 
 export function mockupSkipReason(): MockupFailureReason | null {
@@ -86,13 +127,8 @@ export async function generateFixMockups(
   if (skip) return { mockups: [], reason: skip };
   if (!input.imageBase64) return { mockups: [], reason: "upstream_failed" };
 
-  const formFirst = isFormFirst(input.issues);
-  const patterns = formFirst
-    ? pickRotatingFormPatterns(
-        input.rotateSeed || `${input.host}:${Date.now()}`,
-        2
-      )
-    : [HERO_PATTERN];
+  const formFirst = isFormFirst(input.issues, input.leadForm);
+  const patterns = patternsFor(input);
 
   const mockups: Mockup[] = [];
   for (const pattern of patterns) {
@@ -237,7 +273,9 @@ The attached image is an above-the-fold DESKTOP screenshot of the website "${hos
 
 ${pattern.brief}
 
-This is a STRUCTURAL layout brief for a proven winning pattern. Do not invent new marketing sections or rewrite the product. Preserve ALL form fields and flow from the reference (including multi-step / progress if present) unless this pattern explicitly reduces the visible step.
+${leadFormBrief(input.leadForm)}
+
+This is a STRUCTURAL layout brief for a proven winning pattern. Do not invent new marketing sections or rewrite the product. Preserve ALL form fields and flow from the reference (including multi-step / progress if present) unless this pattern explicitly reduces the visible step. When a measured field list is given above, that list is the whole form: do not append fields.
 
 HARD COPY & CHROME RULES (must follow — these fail on almost every weak result):
 - HEADLINE: maximum 2 lines, about 6–10 words. NEVER a 3- or 4-line stacked H1.
@@ -272,9 +310,37 @@ Return ONLY the redesigned above-the-fold image.`;
 // but the audit's own findings are a strong corroborating signal. If the
 // diagnosed issues clearly reference a form/modal/sign-up/login/demo flow, we
 // flag the page as form-first so the prompt can insist the redesign keep it.
-function isFormFirst(issues: MockupIssueBrief[]): boolean {
+function isFormFirst(
+  issues: MockupIssueBrief[],
+  leadForm?: LeadFormSignal | null
+): boolean {
+  if (leadForm?.present) return true;
   const re = /form|modal|sign[\s-]?up|log[\s-]?in|sign[\s-]?in|demo|waitlist|checkout|lead[\s-]?capture/i;
   return issues.some((i) => re.test(i.title) || re.test(i.category));
+}
+
+/** Closed field list for the image model. Labels are only those read from the DOM. */
+export function leadFormBrief(leadForm?: LeadFormSignal | null): string {
+  if (!leadForm?.present) return "";
+  if (leadForm.source !== "fields" || leadForm.fields.length === 0) {
+    return `MEASURED FORM:
+- A lead form is on this page, but its fields could not be read (often an iframe under a covering layer).
+- Keep a form panel in the redesign.
+- Do NOT invent or append inputs. Do not add name, email, company, phone, or any other field that was not read from the page.`;
+  }
+  const lines = leadForm.fields.map(
+    (field, i) =>
+      `${i + 1}. ${sanitizeUntrustedText(field, 80)}`
+  );
+  const submit = leadForm.submitLabel
+    ? `- The only button on the form is "${sanitizeUntrustedText(leadForm.submitLabel, 80)}". Do not add another.`
+    : "- Do not add a button label that was not on the form.";
+  return `MEASURED FORM — this closed list overrides any layout line that asks for more fields, sample name/email/company/phone, a longer form, or extra steps:
+- The reference image may show a covering layer instead of the form. The form is still on the page.
+- Render EXACTLY these ${leadForm.fields.length} inputs, in this order, and no others:
+${lines.join("\n")}
+- Do not append extra fields, helper inputs, or a second email, name, company, or phone box.
+${submit}`;
 }
 
 function topIssuesBrief(issues: MockupIssueBrief[]): string {
