@@ -68,7 +68,49 @@ const VENDORS: {
     global: /\bkameleoon\b/,
     classId: /\bkameleoon[-_]/i,
   },
+  {
+    vendor: "Varify",
+    script: /varify\.io/i,
+    global: /\bvarify\b/,
+    classId: /\bvarify[-_]/i,
+  },
 ];
+
+/** Query params that force the original control instead of a variant. */
+const FORCE_ORIGINAL_PARAMS: { name: string; value?: RegExp }[] = [
+  { name: "varify-preview", value: /^original$/i },
+  { name: "optimizely_opt_out" },
+  { name: "optimizely_disable" },
+  { name: "vwo_opt_out" },
+  { name: "convert_optout" },
+  { name: "_conv_disable" },
+];
+
+/**
+ * True when the URL opts this visit out of the experiment and asks for the
+ * original page. A variation id (varify-preview=123) is still a test.
+ */
+export function urlForcesOriginalControl(url: string): boolean {
+  let params: URLSearchParams;
+  try {
+    params = new URL(url).searchParams;
+  } catch {
+    return false;
+  }
+  const entries = [...params.entries()];
+  for (const rule of FORCE_ORIGINAL_PARAMS) {
+    const raw = entries.find(
+      ([key]) => key.toLowerCase() === rule.name
+    )?.[1];
+    if (raw == null) continue;
+    if (!rule.value) {
+      if (!/^(0|false|no|off)$/i.test(raw)) return true;
+      continue;
+    }
+    if (rule.value.test(raw)) return true;
+  }
+  return false;
+}
 
 /**
  * Detect a live A/B runner from script/iframe URLs, class/id tokens, and
@@ -185,6 +227,12 @@ export function inspectAndHideLiveTestInPage(): LiveTestInspectResult {
         global: /\bkameleoon\b/,
         classId: /\bkameleoon[-_]/i,
       },
+      {
+        vendor: "Varify",
+        script: /varify\.io/i,
+        global: /\bvarify\b/,
+        classId: /\bvarify[-_]/i,
+      },
     ];
 
   const globalKeys: Record<string, string[]> = {
@@ -195,6 +243,7 @@ export function inspectAndHideLiveTestInPage(): LiveTestInspectResult {
     "AB Tasty": ["ABTasty"],
     Mutiny: ["mutiny"],
     Kameleoon: ["kameleoon"],
+    Varify: ["varify"],
   };
 
   let vendor: string | null = null;
@@ -236,6 +285,8 @@ export function inspectAndHideLiveTestInPage(): LiveTestInspectResult {
     '[class*="vwo-preview"]',
     '[class*="abtasty-preview"]',
     '[class*="convert-preview"]',
+    '[id*="varify-preview"]',
+    '[class*="varify-preview"]',
   ];
 
   let hidden = 0;
@@ -253,7 +304,7 @@ export function inspectAndHideLiveTestInPage(): LiveTestInspectResult {
 
   if (vendor) {
     const chromeRe =
-      /spiralyze|spz error|optimizely|visual website optimizer|\bvwo\b|preview mode|experiment debug/i;
+      /spiralyze|spz error|optimizely|visual website optimizer|\bvwo\b|varify|preview mode|experiment debug/i;
     document
       .querySelectorAll('[role="alert"], [class*="error"], [class*="toast"]')
       .forEach((el) => {

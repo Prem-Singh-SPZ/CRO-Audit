@@ -4,6 +4,8 @@ import {
   safeHost,
   type FormFixPattern,
   type MockupFailureReason,
+  type MockupRegions,
+  type MockupRegionBox,
   type MockupVariant,
 } from "@cro/shared";
 
@@ -20,6 +22,7 @@ export interface Mockup {
   uplift?: number;
   winRate?: number;
   sampleSize?: number;
+  regions?: MockupRegions;
 }
 
 // A single diagnosed flaw, trimmed to just what the redesign brief needs.
@@ -191,6 +194,7 @@ export async function generateFixMockup(
     const mimeType: string = imagePart.inlineData.mimeType || "image/png";
     const data: string = imagePart.inlineData.data;
     const isHero = pattern.name === "Hero";
+    const regions = await locateMockupRegions(apiKey, mimeType, data);
 
     return {
       device: "desktop",
@@ -205,6 +209,7 @@ export async function generateFixMockup(
       uplift: pattern.uplift,
       winRate: pattern.winRate,
       sampleSize: pattern.sampleSize,
+      regions,
     };
   } catch (err) {
     console.error("[mockup] generation failed:", err);
@@ -323,4 +328,111 @@ async function safeText(res: Response): Promise<string> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const REGION_KEYS = ["headline", "bullets", "cta"] as const;
+
+/** Keep only tight, on-canvas boxes. Drop guesses and full-frame boxes. */
+export function parseMockupRegions(raw: unknown): MockupRegions {
+  let value = raw;
+  if (typeof raw === "string") {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  if (!value || typeof value !== "object") return {};
+  const out: MockupRegions = {};
+  for (const key of REGION_KEYS) {
+    const box = normalizeRegionBox((value as Record<string, unknown>)[key]);
+    if (box) out[key] = box;
+  }
+  return out;
+}
+
+function normalizeRegionBox(value: unknown): MockupRegionBox | null {
+  if (!value || typeof value !== "object") return null;
+  const rec = value as Record<string, unknown>;
+  const x = asUnit(rec.x);
+  const y = asUnit(rec.y);
+  const w = asUnit(rec.w);
+  const h = asUnit(rec.h);
+  if (x == null || y == null || w == null || h == null) return null;
+  if (w < 0.04 || h < 0.02 || w > 0.92 || h > 0.55) return null;
+  return { x, y, w, h };
+}
+
+function asUnit(value: unknown): number | null {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(1, Math.max(0, n));
+}
+
+/**
+ * After the redesign image exists, ask a vision model where the headline,
+ * benefits, and primary button actually are. Missing keys stay unannotated.
+ */
+async function locateMockupRegions(
+  apiKey: string,
+  mimeType: string,
+  data: string
+): Promise<MockupRegions> {
+  const model =
+    process.env.MOCKUP_LOCATE_MODEL ||
+    process.env.GEMINI_MODEL ||
+    "gemini-3.1-pro-preview";
+  try {
+    const res = await withTimeout(
+      (signal) =>
+        fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+          {
+            method: "POST",
+            signal,
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": apiKey,
+            },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    {
+                      text: `This image is a finished desktop webpage redesign. Return JSON only:
+{"headline":{"x":0,"y":0,"w":0,"h":0}|null,"bullets":{"x":0,"y":0,"w":0,"h":0}|null,"cta":{"x":0,"y":0,"w":0,"h":0}|null}
+x and y are the CENTER of the element as fractions of image width and height (0-1). w and h are the element size as fractions.
+headline = the main H1 text block only.
+bullets = the short benefit list or trust line directly under the headline. null if absent.
+cta = the filled primary BUTTON only, tight on the button pixels. If the primary action is a form, box that form panel. null if you cannot see a button or form.
+Use null for anything you cannot see. Never box empty space, logos, or the whole hero.`,
+                    },
+                    { inlineData: { mimeType, data } },
+                  ],
+                },
+              ],
+              generationConfig: {
+                temperature: 0,
+                responseMimeType: "application/json",
+              },
+            }),
+          }
+        ),
+      20_000
+    );
+    if (!res.ok) {
+      console.warn("[mockup] region locate HTTP", res.status, "model", model);
+      return {};
+    }
+    const json = (await res.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
+    const text = json.candidates?.[0]?.content?.parts
+      ?.map((p) => p.text ?? "")
+      .join("");
+    return parseMockupRegions(text ?? "");
+  } catch (err) {
+    console.warn("[mockup] region locate failed:", (err as Error)?.message ?? err);
+    return {};
+  }
 }

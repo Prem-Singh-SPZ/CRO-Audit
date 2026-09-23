@@ -31,7 +31,10 @@ import {
   shouldSkipConsentClick,
 } from "./capture-quality";
 import { jpegDimensions } from "./jpeg-size";
-import { inspectAndHideLiveTestInPage } from "./live-test";
+import {
+  inspectAndHideLiveTestInPage,
+  urlForcesOriginalControl,
+} from "./live-test";
 import {
   hideArchiveChromeInPage,
   lookupWayback,
@@ -274,9 +277,8 @@ async function openCaptureTab(
   url: string,
   desktopUa: string,
   jsEnabled: boolean
-): Promise<{ page: Page; abortedHeavy: () => number }> {
+): Promise<Page> {
   const page = await browser.newPage();
-  let abortedHeavy = 0;
   let pageHost = "";
   try {
     pageHost = new URL(url).hostname.toLowerCase();
@@ -308,7 +310,6 @@ async function openCaptureTab(
       !usesLocalChrome() &&
       shouldAbortHeavyCaptureRequest(href, req.resourceType(), pageHost)
     ) {
-      abortedHeavy += 1;
       req.abort().catch(() => {});
       return;
     }
@@ -317,7 +318,7 @@ async function openCaptureTab(
   page.on("dialog", (d) => {
     d.dismiss().catch(() => {});
   });
-  return { page, abortedHeavy: () => abortedHeavy };
+  return page;
 }
 
 function fullPageTimeoutMs(): number {
@@ -359,34 +360,6 @@ async function clearVisitorConsent(
   );
   if (hidden > 0) dismissed = true;
   return dismissed;
-}
-
-function debugCapture(
-  hypothesisId: string,
-  location: string,
-  message: string,
-  data: Record<string, unknown>
-): void {
-  const payload = {
-    sessionId: "a21f4c",
-    runId: "pre-fix",
-    hypothesisId,
-    location,
-    message,
-    data,
-    timestamp: Date.now(),
-  };
-  // #region agent log
-  fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "a21f4c",
-    },
-    body: JSON.stringify(payload),
-  }).catch(() => undefined);
-  console.log("[screenshot:debug]", JSON.stringify(payload));
-  // #endregion
 }
 
 /** Scroll tops for viewport bands that tile the stitch with a small overlap. */
@@ -474,11 +447,6 @@ async function launchBrowser(): Promise<Browser> {
   console.log(`[screenshot] sparticuz binary: ${executablePath}`);
 
   const args = serverlessChromeArgs();
-  debugCapture("F", "screenshot.ts:launch", "serverless-args", {
-    singleProcess: args.some((a) => /single-process/i.test(a)),
-    noZygote: args.some((a) => /no-zygote/i.test(a)),
-    argCount: args.length,
-  });
   return puppeteer.launch({
     args,
     defaultViewport: VIEWPORT,
@@ -569,13 +537,10 @@ async function captureScreenshotsOnce(
     desktopUa = await desktopUserAgent(browser);
     // Cloud Run: first paint with JS off. Blue J / Webflow SIGILL's V8 during
     // goto; SSR HTML still screenshots. Local Chrome keeps JS on.
-    const firstJs = usesLocalChrome();
-    const firstTab = await openCaptureTab(browser, url, desktopUa, firstJs);
-    const page: Page = firstTab.page;
-    debugCapture("G", "screenshot.ts:goto", "js-mode", {
-      js: firstJs,
-      localChrome: usesLocalChrome(),
-    });
+    // A force-original preview param only works if the testing snippet runs.
+    const forceOriginal = urlForcesOriginalControl(url);
+    const firstJs = usesLocalChrome() || forceOriginal;
+    const page = await openCaptureTab(browser, url, desktopUa, firstJs);
 
     let status = 0;
     try {
@@ -585,12 +550,6 @@ async function captureScreenshotsOnce(
       status = response?.status() ?? 0;
     } catch (err) {
       console.warn("[screenshot] navigation issue (continuing):", err);
-      debugCapture("F", "screenshot.ts:goto", "goto-failed", {
-        err: (err as Error)?.message ?? String(err),
-        pageOpen: pageStillOpen(page),
-        abortedHeavy: firstTab.abortedHeavy(),
-        js: firstJs,
-      });
     }
 
     await waitUntilDocumentComplete(page);
@@ -607,62 +566,37 @@ async function captureScreenshotsOnce(
         if (early) {
           screenshots.push(early);
           heroShot = early;
-          debugCapture("A", "screenshot.ts:earlyViewport", "early-fold", {
-            ok: true,
-            w: early.width,
-            h: early.height,
-            localChrome: false,
-          });
-        } else {
-          debugCapture("B", "screenshot.ts:earlyViewport", "early-fold", {
-            ok: false,
-            reason: "null-jpeg",
-            pageOpen: pageStillOpen(page),
-          });
         }
       } catch (err) {
-        debugCapture("B", "screenshot.ts:earlyViewport", "early-fold", {
-          ok: false,
-          reason: isDeadPageError(err) ? "dead-page" : "throw",
-          err: (err as Error)?.message ?? String(err),
-        });
+        console.warn(
+          "[screenshot] early fold failed:",
+          (err as Error)?.message ?? err
+        );
       }
     }
 
     // Upgrade to a JS-painted control when Chromium survives. If V8 SIGILL's,
-    // the no-JS fold already in `screenshots` is kept.
-    if (!usesLocalChrome() && browser) {
+    // the no-JS fold already in `screenshots` is kept. Skip when this visit
+    // already ran JavaScript so a preview param can select the original.
+    if (!usesLocalChrome() && !forceOriginal && browser) {
       try {
         const upgrade = await openCaptureTab(browser, url, desktopUa, true);
         try {
-          await upgrade.page.goto(url, { waitUntil: "domcontentloaded" });
-          const pack = await captureServerlessControl(upgrade.page);
+          await upgrade.goto(url, { waitUntil: "domcontentloaded" });
+          const pack = await captureServerlessControl(upgrade);
           if (pack.control) {
             screenshots.length = 0;
             screenshots.push(pack.control);
             heroShot = pack.viewport ?? pack.control;
-            debugCapture("G", "screenshot.ts:jsUpgrade", "js-upgrade", {
-              ok: true,
-              w: pack.control.width,
-              h: pack.control.height,
-            });
-          } else {
-            debugCapture("G", "screenshot.ts:jsUpgrade", "js-upgrade", {
-              ok: false,
-              reason: "no-jpeg",
-              kept: screenshots.length,
-            });
           }
         } finally {
-          await upgrade.page.close().catch(() => {});
+          await upgrade.close().catch(() => {});
         }
       } catch (err) {
-        debugCapture("G", "screenshot.ts:jsUpgrade", "js-upgrade", {
-          ok: false,
-          reason: isDeadPageError(err) ? "dead-page" : "throw",
-          err: (err as Error)?.message ?? String(err),
-          kept: screenshots.length,
-        });
+        console.warn(
+          "[screenshot] js upgrade failed, keeping no-js fold:",
+          (err as Error)?.message ?? err
+        );
       }
     }
 
@@ -729,12 +663,6 @@ async function captureScreenshotsOnce(
       console.warn(
         `[screenshot] skipping capture for ${url} — reason: ${blockedReason} (status ${status})`
       );
-      debugCapture("C", "screenshot.ts:blocked", "blocked-before-control", {
-        blockedReason,
-        status,
-        earlyShots: screenshots.length,
-        pageOpen: pageStillOpen(page),
-      });
     }
 
     if (!blockedReason) {
@@ -767,10 +695,16 @@ async function captureScreenshotsOnce(
         PAGE_OP_TIMEOUT_MS,
         { vendor: null, hidden: 0 }
       );
-      if (live.vendor) {
+      const forcedOriginal =
+        forceOriginal || urlForcesOriginalControl(finalUrl);
+      if (live.vendor && !forcedOriginal) {
         liveTest = { vendor: live.vendor };
         console.log(
           `[screenshot] live test ${live.vendor} (hid ${live.hidden} chrome nodes)`
+        );
+      } else if (live.vendor && forcedOriginal) {
+        console.log(
+          `[screenshot] ${live.vendor} present but URL forces the original control`
         );
       }
 
@@ -848,16 +782,6 @@ async function captureScreenshotsOnce(
         }
       }
       const controlShot = control.shot;
-      debugCapture("A", "screenshot.ts:afterControl", "control-vs-viewport", {
-        localChrome: usesLocalChrome(),
-        pageOpen: pageStillOpen(page),
-        viewport: viewportShot
-          ? { w: viewportShot.width, h: viewportShot.height }
-          : null,
-        control: controlShot
-          ? { w: controlShot.width, h: controlShot.height, ready: control.ready }
-          : { shot: false, ready: control.ready },
-      });
 
       const stitchW = controlShot?.width ?? VIEWPORT.width;
       const stitchH = controlShot?.height ?? VIEWPORT.height;
@@ -958,11 +882,6 @@ async function captureScreenshotsOnce(
     if (screenshots.length === 0 && pageStillOpen(page)) {
       try {
         const last = await captureViewportJpeg(page);
-        debugCapture("D", "screenshot.ts:lastResort", "last-resort", {
-          ok: Boolean(last),
-          blockedReason,
-          pageOpen: pageStillOpen(page),
-        });
         if (last) {
           screenshots.push(last);
           heroShot = last;
@@ -971,21 +890,12 @@ async function captureScreenshotsOnce(
           captureNote = null;
         }
       } catch (err) {
-        debugCapture("D", "screenshot.ts:lastResort", "last-resort", {
-          ok: false,
-          err: (err as Error)?.message ?? String(err),
-        });
+        console.warn(
+          "[screenshot] last-resort fold failed:",
+          (err as Error)?.message ?? err
+        );
       }
     }
-
-    debugCapture("E", "screenshot.ts:return", "capture-outcome", {
-      shots: screenshots.length,
-      liveUsable,
-      incompleteCapture,
-      blockedReason,
-      captureNote,
-      pageOpen: pageStillOpen(page),
-    });
   } catch (err) {
     console.error("[screenshot] capture failed:", (err as Error)?.message ?? err);
     console.error("[screenshot] stack:", (err as Error)?.stack);
@@ -1388,14 +1298,6 @@ async function captureServerlessControl(page: Page): Promise<{
   );
   const taken = await shootControlJpeg(page);
   const control = taken.shot ?? viewport;
-  debugCapture("B", "screenshot.ts:serverless", "serverless-control", {
-    method: taken.shot ? taken.method : viewport ? "viewport" : "none",
-    viewport: viewport ? { w: viewport.width, h: viewport.height } : null,
-    control: control ? { w: control.width, h: control.height } : null,
-    dismissedConsent,
-    pageOpen: pageStillOpen(page),
-    localChrome: false,
-  });
   return {
     viewport,
     control,
@@ -1446,73 +1348,20 @@ async function walkUntilPageSettled(
 async function captureControlFullPage(
   page: Page
 ): Promise<{ shot: Screenshot | null; ready: boolean }> {
-  let stage = "start";
   try {
     if (!pageStillOpen(page)) {
-      debugCapture("D", "screenshot.ts:control", "early-exit", {
-        stage,
-        reason: "closed-at-start",
-        localChrome: usesLocalChrome(),
-      });
       return { shot: null, ready: false };
     }
-    stage = "hide";
     await clearVisitorConsent(page, true);
-    const hidden = 0;
-    const extent = { width: VIEWPORT.width, height: VIEWPORT.height };
-    const cookie = await raceTimeout(
-      page.evaluate(() => {
-        const text = document.body?.innerText?.slice(0, 5000) ?? "";
-        const buttons = Array.from(
-          document.querySelectorAll("button, [role=button], a")
-        ).filter((el) =>
-          /accept all|reject all|manage cookies|cookie preferences/i.test(
-            (el.textContent || "").replace(/\s+/g, " ")
-          )
-        ).length;
-        return {
-          buttons,
-          cookieCopy: /cookie preferences|accept all|reject all/i.test(text),
-          overflow: getComputedStyle(document.documentElement).overflow,
-        };
-      }),
-      PAGE_OP_TIMEOUT_MS,
-      { buttons: -1, cookieCopy: false, overflow: "?" }
-    );
-    debugCapture("E", "screenshot.ts:control", "after-hide", {
-      hidden,
-      cookie,
-      extent,
-      localChrome: usesLocalChrome(),
-    });
     if (!pageStillOpen(page)) {
-      debugCapture("A", "screenshot.ts:control", "early-exit", {
-        stage,
-        reason: "closed-after-hide",
-        localChrome: usesLocalChrome(),
-      });
       return { shot: null, ready: false };
     }
     // Cloud Run: shoot before any scroll walk. The walk is what detaches the frame.
     if (!usesLocalChrome()) {
-      stage = "shoot-first";
       await waitUntilDocumentPainted(page);
       const early = await shootControlJpeg(page);
-      debugCapture("B", "screenshot.ts:control", "shot-result", {
-        method: early.method,
-        fieldCount: -1,
-        gateReady: true,
-        undecode: false,
-        ready: Boolean(early.shot),
-        shot: early.shot
-          ? { w: early.shot.width, h: early.shot.height }
-          : null,
-        localChrome: false,
-        path: "shoot-first",
-      });
       if (early.shot) return { shot: early.shot, ready: true };
     }
-    stage = "fields";
     await raceTimeout(
       page.evaluate(() => window.scrollTo(0, 0)),
       PAGE_OP_TIMEOUT_MS,
@@ -1526,15 +1375,8 @@ async function captureControlFullPage(
       await waitUntilDocumentPainted(page);
     }
     if (!pageStillOpen(page)) {
-      debugCapture("A", "screenshot.ts:control", "early-exit", {
-        stage,
-        reason: "closed-after-fields",
-        fieldCount,
-        localChrome: usesLocalChrome(),
-      });
       return { shot: null, ready: false };
     }
-    stage = "shoot";
     const gateReady = await raceTimeout(
       page.evaluate(pageIsCaptureReady),
       PAGE_OP_TIMEOUT_MS,
@@ -1565,39 +1407,17 @@ async function captureControlFullPage(
     );
     await waitUntilLayoutStable(page);
     if (!pageStillOpen(page)) {
-      debugCapture("B", "screenshot.ts:control", "early-exit", {
-        stage,
-        reason: "closed-before-jpeg",
-        fieldCount,
-        gateReady,
-        localChrome: usesLocalChrome(),
-      });
       return { shot: null, ready: false };
     }
     const taken = await shootControlJpeg(page);
-    const method = taken.method;
     const shot = taken.shot;
     let ready = !undecode && gateReady;
     // A real desktop JPEG is enough. The style/blank probe false-fails short
     // pages (example.com) and sparse heroes; only fail when visible images
     // never decoded.
     if (!ready && !undecode && shot) ready = true;
-    debugCapture("B", "screenshot.ts:control", "shot-result", {
-      method,
-      fieldCount,
-      gateReady,
-      undecode,
-      ready,
-      shot: shot ? { w: shot.width, h: shot.height } : null,
-      localChrome: usesLocalChrome(),
-    });
     return { shot, ready };
   } catch (err) {
-    debugCapture("C", "screenshot.ts:control", "control-catch", {
-      stage,
-      message: (err as Error)?.message ?? String(err),
-      localChrome: usesLocalChrome(),
-    });
     console.warn(
       "[screenshot] control full-page failed:",
       (err as Error)?.message ?? err

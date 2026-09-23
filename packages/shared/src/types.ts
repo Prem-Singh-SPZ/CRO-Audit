@@ -46,7 +46,23 @@ export interface MockupDto {
   sampleSize?: number;
   /** Gemini image vs. local overlay on the real screenshot. */
   source?: "generated" | "composed";
+  /**
+   * Where the redesign actually painted each element (0–1, center + size).
+   * Callouts use these boxes. Missing keys are not guessed.
+   */
+  regions?: MockupRegions;
 }
+
+export interface MockupRegionBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export type MockupRegions = Partial<
+  Record<"headline" | "bullets" | "cta", MockupRegionBox>
+>;
 
 // The compact seed the report page posts to /api/mockup to generate the "after"
 // concept out-of-band (so the slow image model never blocks the main audit).

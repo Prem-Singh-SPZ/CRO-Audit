@@ -102,6 +102,7 @@ mockup.post("/", async (c) => {
       winRate: result.winRate,
       sampleSize: result.sampleSize,
       source: "generated",
+      regions: result.regions,
     }));
 
     return c.json({

@@ -16,6 +16,7 @@ import {
   type ScreenshotDto,
 } from "@cro/shared";
 import { conceptCopy } from "@/lib/composed-mockup";
+import { buildChangeCallouts } from "@/lib/fix-callouts";
 import { SEVERITY_META, shortCaption } from "@/lib/report-ui";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -30,169 +31,11 @@ const DEFAULT_BOX_H = 0.08;
 const LABEL_W_PX = 208;
 const LABEL_H_PX = 34;
 
-type ChangeSlot = "headline" | "bullets" | "cta";
-type SlotLayout = "hero" | "formRight" | "formLeft" | "formCenter";
-type SlotBox = { x: number; y: number; w: number; h: number };
-
-// Centers + sizes in mockup space. Each redesign pattern has its own layout —
-// sharing one map made the second card's boxes land on the wrong column.
-const SLOTS_BY_LAYOUT: Record<SlotLayout, Record<ChangeSlot, SlotBox>> = {
-  hero: {
-    headline: { x: 0.36, y: 0.335, w: 0.56, h: 0.15 },
-    bullets: { x: 0.24, y: 0.5, w: 0.32, h: 0.13 },
-    cta: { x: 0.2, y: 0.665, w: 0.22, h: 0.075 },
-  },
-  formRight: {
-    headline: { x: 0.28, y: 0.3, w: 0.44, h: 0.16 },
-    bullets: { x: 0.3, y: 0.5, w: 0.38, h: 0.16 },
-    cta: { x: 0.78, y: 0.48, w: 0.32, h: 0.44 },
-  },
-  formLeft: {
-    headline: { x: 0.72, y: 0.3, w: 0.44, h: 0.16 },
-    bullets: { x: 0.7, y: 0.5, w: 0.38, h: 0.16 },
-    cta: { x: 0.22, y: 0.48, w: 0.32, h: 0.44 },
-  },
-  formCenter: {
-    headline: { x: 0.5, y: 0.22, w: 0.5, h: 0.12 },
-    bullets: { x: 0.5, y: 0.36, w: 0.42, h: 0.12 },
-    cta: { x: 0.5, y: 0.58, w: 0.36, h: 0.36 },
-  },
-};
-
-function layoutForMockup(mockup: MockupDto, issues: IssueDto[] = []): SlotLayout {
-  const name = (mockup.patternName || "").toLowerCase();
-  if (name.includes("left")) return "formLeft";
-  if (
-    name.includes("center") ||
-    name.includes("modal") ||
-    name.includes("multi-step") ||
-    (name.includes("over ui") && !name.includes("copy"))
-  ) {
-    return "formCenter";
-  }
-  const formPage =
-    name.includes("form") ||
-    mockup.variant === "form-over-ui" ||
-    mockup.variant === "pattern" ||
-    issues.some((i) =>
-      /form|lead|email|demo|field/i.test(`${i.title} ${i.category}`)
-    );
-  if (formPage) return "formRight";
-  if (mockup.variant === "hero" || !mockup.patternName) return "hero";
-  return "formRight";
-}
-
-const CHANGE_TITLE: Record<ChangeSlot, string> = {
-  headline: "Clearer headline",
-  bullets: "Scannable benefits",
-  cta: "Stronger call to action",
-};
-
-const CHANGE_WHAT: Record<ChangeSlot, string> = {
-  headline: "Rewrote the hero into a short 2-line value proposition.",
-  bullets: "Replaced dense copy with three short benefit bullets.",
-  cta: "One primary action with a clearer, value-led label.",
-};
-
 const FIX_TONE = {
   border: "border-primary",
   fill: "bg-primary/15",
   stroke: "stroke-primary",
 } as const;
-
-const SEVERITY_RANK: Record<IssueDto["severity"], number> = {
-  CRITICAL: 0,
-  HIGH: 1,
-  MEDIUM: 2,
-  LOW: 3,
-  INFO: 4,
-};
-
-function slotForIssue(issue: IssueDto): ChangeSlot {
-  const t = `${issue.title} ${issue.category}`.toLowerCase();
-  if (/headline|h1|title|subhead|value prop/i.test(t)) return "headline";
-  if (/bullet|proof|benefit|trust|social|testimonial|logo/i.test(t))
-    return "bullets";
-  if (/\bcta\b|call to action|button label|button copy/i.test(t)) return "cta";
-  if (/form|email|field|lead capture/i.test(t)) return "cta";
-  return "headline";
-}
-
-function calloutTitle(slot: ChangeSlot, issue: IssueDto): string {
-  const t = `${issue.title} ${issue.category}`.toLowerCase();
-  if (slot === "cta" && !/\bcta\b|call to action|button/i.test(t)) {
-    return issue.title;
-  }
-  return CHANGE_TITLE[slot];
-}
-
-function calloutWhat(slot: ChangeSlot, issue: IssueDto): string {
-  const t = `${issue.title} ${issue.category}`.toLowerCase();
-  if (slot === "cta" && !/\bcta\b|call to action|button/i.test(t)) {
-    return (issue.suggestedFix || issue.description || "").replace(/\s+/g, " ").trim();
-  }
-  return CHANGE_WHAT[slot];
-}
-
-function whyLine(issue: IssueDto): string {
-  const raw = (issue.psychology || issue.whyItMatters || issue.description || "")
-    .replace(/\[[^\]]*\]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return raw || "Visitors hesitated because the offer was unclear.";
-}
-
-/** Pins that describe after-image changes, placed on THIS mockup's layout. */
-function buildChangeCallouts(
-  issues: IssueDto[],
-  heroCutoff: number,
-  layout: SlotLayout,
-  mockupId: string
-): IssueDto[] {
-  const slots = SLOTS_BY_LAYOUT[layout];
-  const used = new Set<ChangeSlot>();
-  const ranked = [...issues].sort(
-    (a, b) =>
-      (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9)
-  );
-  const inHero = ranked.filter(
-    (i) => i.annotationY == null || i.annotationY < heroCutoff
-  );
-  const pool = inHero.length > 0 ? inHero : ranked;
-  const out: IssueDto[] = [];
-
-  for (const issue of pool) {
-    if (out.length >= 3) break;
-    let slot = slotForIssue(issue);
-    if (used.has(slot)) {
-      const next = (["headline", "bullets", "cta"] as ChangeSlot[]).find(
-        (s) => !used.has(s)
-      );
-      if (!next) break;
-      slot = next;
-    }
-    used.add(slot);
-    const box = slots[slot];
-    out.push({
-      ...issue,
-      id: `change-${mockupId}-${issue.id}`,
-      title: calloutTitle(slot, issue),
-      description: calloutWhat(slot, issue),
-      whyItMatters: whyLine(issue),
-      psychology: whyLine(issue),
-      suggestedFix: "",
-      estimatedConversionImpact: "n/a",
-      device: "desktop",
-      annotationX: box.x,
-      annotationY: box.y,
-      annotationW: box.w,
-      annotationH: box.h,
-      severity: "LOW",
-    });
-  }
-
-  return out;
-}
 
 const BOX_TONE: Record<
   keyof typeof SEVERITY_META,
@@ -296,12 +139,7 @@ export function AnnotatedScreenshots({
     for (const m of deviceMockups) {
       map.set(
         m.id,
-        buildChangeCallouts(
-          issues,
-          heroCutoff,
-          layoutForMockup(m, issues),
-          m.id
-        )
+        buildChangeCallouts(issues, heroCutoff, m.regions, m.id)
       );
     }
     return map;
@@ -869,7 +707,9 @@ function FixMockup({
           <p className="text-xs leading-relaxed text-muted-foreground">
             {composed
               ? "Concept applied on your live screenshot so you can still see the direction."
-              : "Callouts mark what we changed on this concept — and why."}
+              : pins.length > 0
+                ? "Callouts sit on the headline, benefits, and button we can see in this concept."
+                : "This concept has no measured callouts — we only mark elements we can see."}
           </p>
           <Button asChild size="sm" variant="gradient" className="shrink-0">
             <Link href={config.bookCallUrl} target="_blank" rel="noopener noreferrer">
