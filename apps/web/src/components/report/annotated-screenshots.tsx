@@ -142,6 +142,39 @@ export function AnnotatedScreenshots({
         buildChangeCallouts(issues, heroCutoff, m.regions, m.id)
       );
     }
+    // #region agent log
+    fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "6b959f",
+      },
+      body: JSON.stringify({
+        sessionId: "6b959f",
+        runId: "post-fix",
+        hypothesisId: "D",
+        location: "annotated-screenshots.tsx:pinsByMockupId",
+        message: "mockup regions vs callouts",
+        data: {
+          heroCutoff,
+          issueTitles: issues.map((i) => i.title),
+          mockups: deviceMockups.map((m) => ({
+            id: m.id,
+            pattern: m.patternName,
+            regions: m.regions ?? null,
+            pins: (map.get(m.id) ?? []).map((p) => ({
+              title: p.title,
+              x: p.annotationX,
+              y: p.annotationY,
+              w: p.annotationW,
+              h: p.annotationH,
+            })),
+          })),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     return map;
   }, [deviceMockups, issues, heroCutoff]);
   const changePins = mockup ? (pinsByMockupId.get(mockup.id) ?? []) : [];
@@ -276,23 +309,38 @@ function placeLabels(
     id: string;
     lx: number;
     ly: number;
-    side: "left" | "right";
+    side: "left" | "right" | "above" | "below";
   }[] = [];
 
   for (const issue of pins) {
     const box = boxFor(issue);
-    let side: "left" | "right" = box.cx < 0.55 ? "right" : "left";
-    let lx = side === "right" ? box.left + box.w + 0.012 : box.left - labelW - 0.012;
+    const gap = 0.012;
+    const roomRight = 1 - (box.left + box.w) - gap;
+    const roomLeft = box.left - gap;
+    let side: "left" | "right" | "above" | "below" =
+      box.cx < 0.5 ? "left" : "right";
+    if (side === "right" && roomRight < labelW && roomLeft >= labelW) side = "left";
+    if (side === "left" && roomLeft < labelW && roomRight >= labelW) side = "right";
+
+    let lx =
+      side === "right" ? box.left + box.w + gap : box.left - labelW - gap;
     let ly = box.top;
 
-    if (lx < 0.01) {
-      side = "right";
-      lx = box.left + box.w + 0.012;
+    const crossesMiddle =
+      (lx + labelW / 2 - 0.5) * (box.cx - 0.5) < 0 &&
+      Math.abs(lx + labelW / 2 - box.cx) > labelW * 0.6;
+    if (crossesMiddle || (side === "left" && roomLeft < labelW) || (side === "right" && roomRight < labelW)) {
+      const above = box.top - labelH - 0.008;
+      if (above >= 0.004) {
+        side = "above";
+        ly = above;
+      } else {
+        side = "below";
+        ly = box.top + box.h + 0.008;
+      }
+      lx = box.cx < 0.5 ? box.left : box.left + box.w - labelW;
     }
-    if (lx + labelW > 0.99) {
-      side = "left";
-      lx = box.left - labelW - 0.012;
-    }
+
     lx = Math.max(0.01, Math.min(0.99 - labelW, lx));
     ly = Math.max(0.004, Math.min(0.996 - labelH, ly));
 
@@ -349,6 +397,58 @@ function ScreenshotCallouts({
     () => placeLabels(pins, size.w, size.h),
     [pins, size.w, size.h]
   );
+
+  // #region agent log
+  React.useEffect(() => {
+    const img = rootRef.current?.parentElement?.querySelector("img");
+    const payload = pins.map((issue) => {
+      const box = boxFor(issue);
+      const label = placed.find((p) => p.id === issue.id);
+      return {
+        id: issue.id,
+        title: issue.title,
+        raw: {
+          x: issue.annotationX,
+          y: issue.annotationY,
+          w: issue.annotationW,
+          h: issue.annotationH,
+        },
+        box,
+        label,
+      };
+    });
+    fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "6b959f",
+      },
+      body: JSON.stringify({
+        sessionId: "6b959f",
+        runId: "post-fix",
+        hypothesisId: "A-B-C",
+        location: "annotated-screenshots.tsx:ScreenshotCallouts",
+        message: "annotation geometry",
+        data: {
+          mode,
+          container: size,
+          img: img
+            ? {
+                nw: img.naturalWidth,
+                nh: img.naturalHeight,
+                cw: img.clientWidth,
+                ch: img.clientHeight,
+              }
+            : null,
+          pins: payload,
+          labelW,
+          labelH,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+  }, [pins, placed, size, mode, labelW, labelH]);
+  // #endregion
   const labels = new Map(placed.map((p) => [p.id, p]));
   const selected = interactive
     ? pins.find((p) => p.id === selectedIssueId) ?? null
@@ -367,12 +467,11 @@ function ScreenshotCallouts({
           const label = labels.get(issue.id);
           if (!label) return null;
           const tone = mode === "fixes" ? FIX_TONE : BOX_TONE[issue.severity];
-          const x1 =
-            (label.side === "right" ? label.lx : label.lx + labelW) * 100;
-          const y1 = (label.ly + labelH / 2) * 100;
-          const x2 =
-            (label.side === "right" ? box.left + box.w : box.left) * 100;
-          const y2 = box.cy * 100;
+          const vertical = label.side === "above" || label.side === "below";
+          const x1 = (vertical ? label.lx + labelW / 2 : label.side === "right" ? label.lx : label.lx + labelW) * 100;
+          const y1 = (vertical ? (label.side === "above" ? label.ly + labelH : label.ly) : label.ly + labelH / 2) * 100;
+          const x2 = (vertical ? box.cx : label.side === "right" ? box.left + box.w : box.left) * 100;
+          const y2 = (vertical ? (label.side === "above" ? box.top : box.top + box.h) : box.cy) * 100;
           return (
             <line
               key={`arrow-${issue.id}`}

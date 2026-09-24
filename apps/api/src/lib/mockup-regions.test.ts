@@ -15,4 +15,13 @@ describe("parseMockupRegions", () => {
     expect(regions.bullets).toBeUndefined();
     expect(regions.cta).toBeUndefined();
   });
+
+  it("keeps a box whose center sits on the image edge", () => {
+    const regions = parseMockupRegions(
+      JSON.stringify({
+        headline: { x: 0.709, y: 1, w: 0.398, h: 0.231 },
+      })
+    );
+    expect(regions.headline).toEqual({ x: 0.709, y: 1, w: 0.398, h: 0.231 });
+  });
 });

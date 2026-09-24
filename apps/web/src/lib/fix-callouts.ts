@@ -42,6 +42,21 @@ function calloutWhat(slot: ChangeSlot): string {
   return CHANGE_WHAT[slot];
 }
 
+/**
+ * Keep every measured box. A center pasted on the bottom edge is the logo
+ * row, not the headline — slide that headline up into the title band and
+ * pull any box fully onto the image.
+ */
+function settleBox(slot: ChangeSlot, box: MockupRegionBox): MockupRegionBox {
+  let { x, y, w, h } = box;
+  if (slot === "headline" && y > 0.72) {
+    y = Math.min(0.42, 0.16 + h / 2);
+  }
+  x = Math.max(w / 2, Math.min(1 - w / 2, x));
+  y = Math.max(h / 2, Math.min(1 - h / 2, y));
+  return { x, y, w, h };
+}
+
 function whyLine(issue: IssueDto): string {
   const raw = (issue.psychology || issue.whyItMatters || issue.description || "")
     .replace(/\[[^\]]*\]/g, "")
@@ -50,10 +65,36 @@ function whyLine(issue: IssueDto): string {
   return raw || "Visitors hesitated because the offer was unclear.";
 }
 
+const SLOT_ORDER: ChangeSlot[] = ["headline", "bullets", "cta"];
+
+function pinFor(
+  issue: IssueDto,
+  slot: ChangeSlot,
+  box: MockupRegionBox,
+  mockupId: string
+): IssueDto {
+  return {
+    ...issue,
+    id: `change-${mockupId}-${slot}`,
+    title: calloutTitle(slot),
+    description: calloutWhat(slot),
+    whyItMatters: whyLine(issue),
+    psychology: whyLine(issue),
+    suggestedFix: "",
+    estimatedConversionImpact: "n/a",
+    device: "desktop",
+    annotationX: box.x,
+    annotationY: box.y,
+    annotationW: box.w,
+    annotationH: box.h,
+    severity: "LOW",
+  };
+}
+
 /**
- * Pins for the redesign. A box is drawn only where the finished image
- * actually contains that element. Unmatched findings are not moved onto
- * a leftover slot.
+ * Pins for the redesign. Every measured headline, benefit list, and button
+ * is drawn. A finding is used when its title matches that element; a
+ * navigation finding is never moved onto the button.
  */
 export function buildChangeCallouts(
   issues: IssueDto[],
@@ -62,7 +103,6 @@ export function buildChangeCallouts(
   mockupId: string
 ): IssueDto[] {
   if (!regions) return [];
-  const used = new Set<ChangeSlot>();
   const ranked = [...issues].sort(
     (a, b) =>
       (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9)
@@ -71,32 +111,21 @@ export function buildChangeCallouts(
     (i) => i.annotationY == null || i.annotationY < heroCutoff
   );
   const pool = inHero.length > 0 ? inHero : ranked;
-  const out: IssueDto[] = [];
-
+  const matched = new Map<ChangeSlot, IssueDto>();
   for (const issue of pool) {
-    if (out.length >= 3) break;
     const slot = slotForIssue(issue);
-    if (!slot || used.has(slot)) continue;
-    const box: MockupRegionBox | undefined = regions[slot];
-    if (!box) continue;
-    used.add(slot);
-    out.push({
-      ...issue,
-      id: `change-${mockupId}-${issue.id}`,
-      title: calloutTitle(slot),
-      description: calloutWhat(slot),
-      whyItMatters: whyLine(issue),
-      psychology: whyLine(issue),
-      suggestedFix: "",
-      estimatedConversionImpact: "n/a",
-      device: "desktop",
-      annotationX: box.x,
-      annotationY: box.y,
-      annotationW: box.w,
-      annotationH: box.h,
-      severity: "LOW",
-    });
+    if (!slot || matched.has(slot) || !regions[slot]) continue;
+    matched.set(slot, issue);
   }
 
+  const fallback = pool[0] ?? ranked[0];
+  const out: IssueDto[] = [];
+  for (const slot of SLOT_ORDER) {
+    const raw = regions[slot];
+    if (!raw) continue;
+    const issue = matched.get(slot) ?? fallback;
+    if (!issue) continue;
+    out.push(pinFor(issue, slot, settleBox(slot, raw), mockupId));
+  }
   return out;
 }

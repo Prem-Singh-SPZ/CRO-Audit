@@ -54,7 +54,7 @@ describe("buildChangeCallouts", () => {
       { headline: regions.headline },
       "m1"
     );
-    expect(pins).toEqual([]);
+    expect(pins.map((p) => p.title)).toEqual(["Clearer headline"]);
   });
 
   it("does not label the button with a navigation finding", () => {
@@ -74,6 +74,7 @@ describe("buildChangeCallouts", () => {
     );
     expect(pins.map((p) => p.title)).toEqual([
       "Clearer headline",
+      "Scannable benefits",
       "Stronger call to action",
     ]);
     expect(pins.some((p) => /navigation/i.test(p.title))).toBe(false);
@@ -89,7 +90,41 @@ describe("buildChangeCallouts", () => {
       regions,
       "m1"
     );
-    expect(pins.map((p) => p.title)).toEqual(["Clearer headline"]);
+    expect(pins.map((p) => p.title)).toEqual([
+      "Clearer headline",
+      "Scannable benefits",
+      "Stronger call to action",
+    ]);
+    expect(pins.find((p) => p.title === "Stronger call to action")?.id).toContain(
+      "cta"
+    );
+  });
+
+  it("moves a headline box off the bottom edge up onto the title", () => {
+    const pins = buildChangeCallouts(
+      [issue({ id: "h", title: "Headline is vague" })],
+      1,
+      { headline: { x: 0.709, y: 1, w: 0.398, h: 0.231 } },
+      "m1"
+    );
+    expect(pins).toHaveLength(1);
+    expect(pins[0]?.annotationY).toBeLessThan(0.45);
+    expect(pins[0]?.annotationX).toBeCloseTo(0.709);
+  });
+
+  it("keeps a bottom-edge button on the image", () => {
+    const pins = buildChangeCallouts(
+      [issue({ id: "h", title: "Hero Headline" })],
+      1,
+      {
+        headline: regions.headline,
+        cta: { x: 0.699, y: 1, w: 0.277, h: 0.456 },
+      },
+      "m1"
+    );
+    const cta = pins.find((p) => p.title === "Stronger call to action");
+    expect(cta?.annotationY).toBeLessThan(1);
+    expect((cta?.annotationY ?? 0) + (cta?.annotationH ?? 0) / 2).toBeLessThanOrEqual(1);
   });
 
   it("draws nothing when the redesign was not measured", () => {
