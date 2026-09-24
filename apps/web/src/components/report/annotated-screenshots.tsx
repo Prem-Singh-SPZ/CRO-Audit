@@ -142,39 +142,6 @@ export function AnnotatedScreenshots({
         buildChangeCallouts(issues, heroCutoff, m.regions, m.id)
       );
     }
-    // #region agent log
-    fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "6b959f",
-      },
-      body: JSON.stringify({
-        sessionId: "6b959f",
-        runId: "post-fix",
-        hypothesisId: "D",
-        location: "annotated-screenshots.tsx:pinsByMockupId",
-        message: "mockup regions vs callouts",
-        data: {
-          heroCutoff,
-          issueTitles: issues.map((i) => i.title),
-          mockups: deviceMockups.map((m) => ({
-            id: m.id,
-            pattern: m.patternName,
-            regions: m.regions ?? null,
-            pins: (map.get(m.id) ?? []).map((p) => ({
-              title: p.title,
-              x: p.annotationX,
-              y: p.annotationY,
-              w: p.annotationW,
-              h: p.annotationH,
-            })),
-          })),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     return map;
   }, [deviceMockups, issues, heroCutoff]);
   const changePins = mockup ? (pinsByMockupId.get(mockup.id) ?? []) : [];
@@ -398,57 +365,6 @@ function ScreenshotCallouts({
     [pins, size.w, size.h]
   );
 
-  // #region agent log
-  React.useEffect(() => {
-    const img = rootRef.current?.parentElement?.querySelector("img");
-    const payload = pins.map((issue) => {
-      const box = boxFor(issue);
-      const label = placed.find((p) => p.id === issue.id);
-      return {
-        id: issue.id,
-        title: issue.title,
-        raw: {
-          x: issue.annotationX,
-          y: issue.annotationY,
-          w: issue.annotationW,
-          h: issue.annotationH,
-        },
-        box,
-        label,
-      };
-    });
-    fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "6b959f",
-      },
-      body: JSON.stringify({
-        sessionId: "6b959f",
-        runId: "post-fix",
-        hypothesisId: "A-B-C",
-        location: "annotated-screenshots.tsx:ScreenshotCallouts",
-        message: "annotation geometry",
-        data: {
-          mode,
-          container: size,
-          img: img
-            ? {
-                nw: img.naturalWidth,
-                nh: img.naturalHeight,
-                cw: img.clientWidth,
-                ch: img.clientHeight,
-              }
-            : null,
-          pins: payload,
-          labelW,
-          labelH,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  }, [pins, placed, size, mode, labelW, labelH]);
-  // #endregion
   const labels = new Map(placed.map((p) => [p.id, p]));
   const selected = interactive
     ? pins.find((p) => p.id === selectedIssueId) ?? null
