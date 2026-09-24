@@ -57,9 +57,6 @@ analyze.post("/", async (c) => {
   }
 
   const url = parsed.data.url;
-  // #region agent log
-  fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"pre-fix",hypothesisId:"A",location:"analyze.ts:url",message:"parsed analyze url",data:{search:(()=>{try{return new URL(url).search}catch{return ""}})(),host:safeHost(url)},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   const auditContext = {
     targetAudience: parsed.data.targetAudience,
     coreProduct: parsed.data.coreProduct,

@@ -15,6 +15,14 @@ describe("detectLiveTestFromHtml", () => {
     ).toEqual({ vendor: "Spiralyze" });
   });
 
+  it("does not treat a site CSS class named spz- as a live test", () => {
+    expect(
+      detectLiveTestFromHtml(
+        `<html><style>.spz-features-accordion-section { display: none; }</style><div class="spz-features-accordion-section"></div></html>`
+      )
+    ).toBeNull();
+  });
+
   it("detects Optimizely from a global assignment", () => {
     expect(
       detectLiveTestFromHtml(

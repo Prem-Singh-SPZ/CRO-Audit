@@ -6,12 +6,12 @@
 
 ## What it does
 
-1. Visitor lands on the site and enters their URL.
-2. We look at the live page the way a CRO team would: the real HTML, a full-page screenshot, and Google performance data.
-3. We return an interactive report: overall score, annotated issues on their screenshot, recommended experiments, and one or two AI redesign concepts.
-4. Full detail is gated behind a short email code. They can email themselves a summary. Sales CTAs go to the Spiralyze demo / book-a-call link.
+1. Visitor lands on the **Next.js** site (`apps/web`) and enters their URL.
+2. The **Hono API** (`apps/api`) looks at the live page: **cheerio** reads the HTML, **Puppeteer** plus Chromium takes a real screenshot, and **Google PageSpeed Insights** supplies Lighthouse scores when a key is set.
+3. We return an interactive report: overall score, issues pinned on their screenshot, recommended experiments, and one or two redesign concepts.
+4. Full detail is gated behind a 6-digit email code sent by **nodemailer** (SMTP). They can email themselves an HTML summary. Sales CTAs go to the Spiralyze demo / book-a-call link (`NEXT_PUBLIC_BOOK_CALL_URL`).
 
-No login, no customer database. The report lives in their browser for that session.
+There is no login. The on-screen report starts in the browser’s `sessionStorage`. A verified visitor stays unlocked for **7 days** in `localStorage`. Optional share links and the email code are stored in **Vercel Blob**. A verified email is also appended to a **Google Sheet** (Apps Script webhook) when that webhook is configured.
 
 ---
 
@@ -19,11 +19,31 @@ No login, no customer database. The report lives in their browser for that sessi
 
 Think of it as **look at the page → diagnose → show the fix**.
 
-- **Look:** A headless Chrome browser opens their site and takes a real screenshot. We also read the page’s structure (headline, forms, buttons) and pull Lighthouse scores from Google PageSpeed Insights.
-- **Diagnose:** A vision AI model reads the screenshot plus the page text and writes the audit — *when an API key is configured*. If not, or if the AI fails, a built-in rules engine still produces a page-specific report.
-- **Show the fix:** A second, slower step generates the “With fixes” mockup(s). Form-heavy pages get two proven layout patterns; marketing pages get a cleaner hero. Issues stay pinned on the real screenshot; each redesign gets its own callouts so boxes match that layout.
+- **Look:** **Puppeteer** driving headless Chromium opens their site and takes a desktop screenshot (local Chrome via `CHROME_EXECUTABLE_PATH`; system Chromium on Cloud Run; **@sparticuz/chromium** is the serverless fallback). **cheerio** reads structure (headline, forms, buttons, proof). **Google PageSpeed Insights** returns Lighthouse performance, accessibility, SEO, and Core Web Vitals when `GOOGLE_PAGESPEED_API_KEY` works. If the key is missing or both the mobile and desktop calls fail, **`fallbackLighthouse`** (our formula in `pagespeed.ts`) fills the same slots from the crawl — it is not random. See [Performance scores without PageSpeed](#performance-scores-without-pagespeed).
+- **If the live page is unusable:** **Puppeteer** still tries first. A bot wall, blank render, or failed capture is detected in code (`detectChallenge` / capture-quality checks). We then ask the **Internet Archive CDX API** (`web.archive.org`) for a snapshot and screenshot that instead. A URL that is already an archive link is captured as an archive on purpose. A blocked page that we cannot recover skips the vision model and uses the heuristic “blocked” report from **`mock-ai.ts`**.
+- **If a live test is already running:** **Puppeteer** inspects the rendered DOM (`live-test.ts`) for Spiralyze / vendor experiment classes. When one is still active, **Gemini** is told to treat that treatment as the winner and not file it as a broken control.
+- **Diagnose:** **Gemini `gemini-3.1-pro-preview`** (`AI_PROVIDER=gemini`, `GEMINI_MODEL`) reads the screenshot plus the page text and writes the audit. A second call to the **same Gemini model** (`applySectionCritic`) adds a flaw or a strength for any page section the first pass skipped. **Zod** rejects malformed JSON. If Gemini fails and no other provider key is set, **`mock-ai.ts`** (our rules engine) still produces a page-specific report. Recommended lifts come from the **Spiralyze win-pattern library** in `@cro/shared` (`win-patterns.ts`), not from a guessed percentage.
+- **Show the fix:** **Gemini `gemini-3-pro-image-preview`** (`MOCKUP_MODEL`) draws the “With fixes” image. Form-heavy pages get **two** layouts chosen from that win-pattern library; other pages get **one** cleaner hero. Issues on the real screenshot are pinned by our **landmark measurement** in Puppeteer (`landmarks.ts`), not by the image model. Each redesign then gets its own boxes from a third **Gemini** call — `MOCKUP_LOCATE_MODEL` if set, otherwise **`gemini-3.1-pro-preview`** — which locates the headline, benefits, and button. Turn the whole mockup step off with `ENABLE_FIX_MOCKUP=false`.
+- **Unlock and follow-up:** **nodemailer** sends the 6-digit code and, if they ask, a short HTML summary (score, bottleneck, top issues, book-a-call). The hashed code lives in **Vercel Blob** for 10 minutes. **Share** (optional, separate) uploads the report JSON to **Vercel Blob** via `@vercel/blob`. A **Vercel cron** (`/api/cron/cleanup-reports`, daily) deletes shared reports older than 30 days. “This finding is wrong” feedback from a verified visitor is appended to the same **Google Sheet** as the lead.
 
-Email is a short HTML summary (score, bottleneck, top issues, book-a-call). Sharing a live report is optional and separate.
+Repeat audits of the same URL can skip a full crawl when `ENABLE_RESULT_CACHE=true`. That cache is in-memory on the API instance and is off unless we turn it on.
+
+---
+
+## Performance scores without PageSpeed
+
+**Not random.** With no `GOOGLE_PAGESPEED_API_KEY`, or when PageSpeed fails, **`fallbackLighthouse`** estimates the four scores from signals **cheerio** already collected:
+
+| Shown number | How it is estimated |
+| --- | --- |
+| Performance | Starts at 92 and drops as the crawl’s load time passes 1.5s. Floor is 30. |
+| Accessibility | 60–90 from how many images have alt text. |
+| Best practices | 83 on HTTPS, otherwise 62. |
+| SEO | About 65–90 from whether a meta description and an H1 exist. |
+| LCP, FCP, Speed Index, TTI | Scaled from that same crawl load time. |
+| CLS and Total Blocking Time | Fixed placeholders: **0.05** and **120**. Those two are not measured. |
+
+Locally `GOOGLE_PAGESPEED_API_KEY` is empty, so this machine uses that estimate. Cloud Run may still have the real key; that setting is not in the repo. With a working key, the numbers are **Google PageSpeed Insights** (Lighthouse), mobile first, desktop only if mobile fails.
 
 ---
 
@@ -35,43 +55,51 @@ Results are a **hybrid** of four things:
 
 | Source | What it is | What it contributes |
 | --- | --- | --- |
-| **Live page evidence** | HTML crawl, real screenshot, Google Lighthouse | Facts about *this* site — not a generic template |
+| **Live page evidence** | **cheerio** HTML crawl, **Puppeteer** screenshot, **Google PageSpeed Insights** or **`fallbackLighthouse`** | Facts about *this* site — not a generic template |
 | **Our own rules engine** | Heuristic CRO analyzer (`apps/api/src/lib/mock-ai.ts`) — no API key needed | Scores and issues from known conversion patterns (weak CTAs, form friction, missing proof, etc.) |
 | **Spiralyze pattern library** | Curated A/B-test winners in `@cro/shared` (`win-patterns.ts`): uplift, win rate, sample size | Grounds recommended lifts and “With fixes” layouts in real experiments, not an AI guess |
-| **Third-party AI (in use now)** | **Google Gemini** — `gemini-3.1-pro-preview` for the written audit, `gemini-3-pro-image-preview` for the redesign image (`AI_PROVIDER=gemini`) | Richer written findings and the photorealistic “With fixes” concept |
+| **Third-party AI (in use now)** | **Google Gemini** — `gemini-3.1-pro-preview` for the written audit, the section fill-in, and redesign callout boxes; `gemini-3-pro-image-preview` for the redesign image (`AI_PROVIDER=gemini`) | Richer written findings and the photorealistic “With fixes” concept |
 
 **What we do *not* do:** collect customer pages into a training set, or fine-tune a Spiralyze-owned model. The AI is rented via API. Our proprietary knowledge is the **rules + the proven-pattern library**. The AI is instructed with the live page and those patterns; it does not “learn” from each audit.
 
-**Right now:** `AI_PROVIDER=gemini`. The live models are **`gemini-3.1-pro-preview`** (audit) and **`gemini-3-pro-image-preview`** (mockup). OpenAI and Anthropic are wired in the code but have no keys in this environment, so if Gemini fails we fall back to **our heuristic engine**, not GPT or Claude.
+**Right now (local `.env`):** `AI_PROVIDER=gemini`. The live models are **`gemini-3.1-pro-preview`** (audit, section critic, mockup region boxes) and **`gemini-3-pro-image-preview`** (mockup image). OpenAI and Anthropic are wired in the code but have no keys here, so if Gemini fails we fall back to **`mock-ai.ts`**, not GPT or Claude. If those keys were added, the API would try them before the rules engine.
 
-Bot-blocked / verification-wall pages skip the AI on purpose (the screenshot is not the real page) and use the honest heuristic “blocked” report.
+Bot-blocked pages that we cannot screenshot skip Gemini on purpose and use the honest heuristic “blocked” report from **`mock-ai.ts`**.
 
 ---
 
 ## AI models we use
 
-**In this environment we are using Gemini only.**
+**In the local environment we are using Gemini only.**
 
-| Job | Model in use now |
+| Job | Model or engine in use now |
 | --- | --- |
-| Written audit (score, issues, copy) | **`gemini-3.1-pro-preview`** (`AI_PROVIDER=gemini`, `GEMINI_MODEL`) |
-| “With fixes” redesign image | **`gemini-3-pro-image-preview`** (`MOCKUP_MODEL`, `ENABLE_FIX_MOCKUP=true`) |
-| If Gemini fails | Our heuristic engine — not OpenAI or Anthropic (no keys configured) |
+| Written audit (score, issues, copy) | **Gemini `gemini-3.1-pro-preview`** (`AI_PROVIDER=gemini`, `GEMINI_MODEL`) |
+| Fill in sections the first audit missed | **Same Gemini model** (`applySectionCritic`) |
+| “With fixes” redesign image | **Gemini `gemini-3-pro-image-preview`** (`MOCKUP_MODEL`, `ENABLE_FIX_MOCKUP=true`) |
+| Boxes on that redesign | **Gemini `gemini-3.1-pro-preview`**, or `MOCKUP_LOCATE_MODEL` if set |
+| Boxes on the real screenshot | **Puppeteer landmark measurement** (`landmarks.ts`) — not a model |
+| Layout choice and lift numbers | **Win-pattern library** (`win-patterns.ts`) |
+| If Gemini fails | **`mock-ai.ts`** — not OpenAI or Anthropic (no keys configured) |
+| Performance scores | **Google PageSpeed Insights** when the key works; otherwise **`fallbackLighthouse`** |
 
-The stack can switch providers. These are **available but not in use** unless a key is added and `AI_PROVIDER` is changed:
+The stack can switch the written-audit provider. These are **available but not in use** unless a key is added and `AI_PROVIDER` is changed:
 
 | Provider | Env | Model if enabled | Role |
 | --- | --- | --- | --- |
 | **OpenAI** | `OPENAI_API_KEY` / `OPENAI_MODEL` | `gpt-4o-mini` | Alternate vision audit |
 | **Anthropic** | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | `claude-3-5-sonnet-latest` | Alternate vision audit |
-| **Heuristic engine** | `AI_PROVIDER=mock` | None | Rules-only mode |
+| **Heuristic engine** | `AI_PROVIDER=mock` | None | Rules-only mode (`mock-ai.ts`) |
 
-`AI_PROVIDER` chooses who we try first: `mock` \| `gemini` \| `openai` \| `anthropic`. Mockups stay Gemini image even if the written audit uses another provider. Can be turned off with `ENABLE_FIX_MOCKUP=false`.
+`AI_PROVIDER` chooses who we try first: `mock` \| `gemini` \| `openai` \| `anthropic`. Mockup images stay **Gemini `gemini-3-pro-image-preview`** even if the written audit uses another provider. Can be turned off with `ENABLE_FIX_MOCKUP=false`.
 
 ### Other intelligence that is not a generative model
 
-- **Google PageSpeed Insights API** — Lighthouse performance, accessibility, SEO, Core Web Vitals (`GOOGLE_PAGESPEED_API_KEY`).
-- **cheerio 1.0** + **puppeteer-core 25.3** + Chromium — structure and screenshot. Not AI; they are how we *see* the page.
+- **Google PageSpeed Insights API** — Lighthouse performance, accessibility, SEO, Core Web Vitals (`GOOGLE_PAGESPEED_API_KEY`). Missing key → **`fallbackLighthouse`**.
+- **cheerio 1.0** — HTML structure. Not AI.
+- **puppeteer-core 25.3** + Chromium — screenshot, consent dismissal, live-test detection, landmark boxes. Not AI.
+- **Internet Archive CDX API** — archived snapshot when the live capture is unusable.
+- **Google Sheet** (Apps Script webhook) — verified lead row and finding-feedback row. Not AI.
 
 ---
 
@@ -96,8 +124,11 @@ Monorepo (`npm` workspaces): `apps/web` (UI), `apps/api` (analysis), `packages/s
 | --- | --- |
 | Website | **Vercel Hobby** (`apps/web`) |
 | Analysis API | **GCP Cloud Run** (`apps/api` Docker image with system Chromium) |
-| Optional share files | **Vercel Blob** (`@vercel/blob` 2.6) — only when someone clicks Share |
-| Persistence | **None.** Report JSON in the browser `sessionStorage`. No database, no background workers. |
+| Share files and email codes | **Vercel Blob** (`@vercel/blob` 2.6) — share only when someone clicks Share; OTP hash whenever they request a code |
+| Lead list | **Google Sheet** via Apps Script webhook (`GOOGLE_SHEET_WEBHOOK_URL`) — email, URL, score, geo, IP, user agent |
+| On-screen report | Browser **`sessionStorage`**. Unlock token in **`localStorage`** for 7 days |
+| Scheduled cleanup | **Vercel cron** deletes shared reports older than 30 days |
+| Repeat-audit cache | Optional in-memory cache on the API (`ENABLE_RESULT_CACHE`, off by default). No database |
 
 ### Page capture & metrics
 
@@ -106,16 +137,19 @@ Monorepo (`npm` workspaces): `apps/web` (UI), `apps/api` (analysis), `packages/s
 | HTML parse | **cheerio 1.0** |
 | Screenshot | **puppeteer-core 25.3** driving Chrome/Chromium (`CHROME_EXECUTABLE_PATH` locally; system Chromium on Cloud Run) |
 | Serverless Chromium fallback | **@sparticuz/chromium 149** |
-| Performance | **Google PageSpeed Insights API** (Lighthouse scores + Core Web Vitals) |
+| Archive fallback | **Internet Archive CDX API** (`lookupWayback`) |
+| Performance | **Google PageSpeed Insights API**, or **`fallbackLighthouse`** when the key is missing or the call fails |
 
 ### Intelligence
 
 | What | Exact thing |
 | --- | --- |
 | Written audit (**in use**) | **Gemini** `gemini-3.1-pro-preview` (`AI_PROVIDER=gemini`) |
+| Section fill-in | **Same Gemini model** (`applySectionCritic`) |
 | Written audit (not in use) | **OpenAI** `gpt-4o-mini` or **Anthropic** `claude-3-5-sonnet-latest` — code-ready, no keys set |
 | Fallback audit | Our heuristic engine — `apps/api/src/lib/mock-ai.ts` |
 | Redesign images | **Gemini** `gemini-3-pro-image-preview` (`MOCKUP_MODEL`) |
+| Redesign callout boxes | **Gemini** `gemini-3.1-pro-preview` or `MOCKUP_LOCATE_MODEL` |
 | Evidence for lifts / layouts | Spiralyze **win-pattern library** in `@cro/shared` |
 | Output validation | **Zod 3.23** — malformed AI JSON is rejected and we fall back |
 
@@ -136,13 +170,13 @@ Monorepo (`npm` workspaces): `apps/web` (UI), `apps/api` (analysis), `packages/s
 
 | What | Exact thing |
 | --- | --- |
-| Tests | **Vitest 2.1** (SSRF + sanitizer helpers) |
+| Tests | **Vitest 2.1** across capture, live tests, landmarks, mockups, Wayback, quote gate, SSRF, and sanitizer — plus `e2e/smoke.spec.ts` |
 | Lint / format | **ESLint 8.57** + **eslint-config-next 14.2.35** + **Prettier 3.3** |
 | Local env | **dotenv-cli 11** + **concurrently 9.1** |
-| URL safety | SSRF guard (block private / metadata targets; re-check redirects) |
-| Abuse | Per-IP rate limits on analyze / mockup / email |
+| URL safety | SSRF guard (`net-guard.ts`) — block private / metadata targets; re-check redirects |
+| Abuse | In-memory per-IP rate limits on analyze, mockup, email-code, report email, and finding feedback |
 | Browser CORS | `CORS_ORIGINS` on the API |
-| Prompt safety | Scraped page text sanitized before it is put in an AI prompt |
+| Prompt safety | Scraped page text sanitized (`sanitize.ts`) before it is put in an AI prompt |
 | Chromium cap | `MAX_CONCURRENT_BROWSERS` so Cloud Run does not run out of memory |
 
 See [`TECH_STACK.md`](TECH_STACK.md) for “why this stack” and [`DEPLOYMENT.md`](DEPLOYMENT.md) for how we ship it.
@@ -151,6 +185,6 @@ See [`TECH_STACK.md`](TECH_STACK.md) for “why this stack” and [`DEPLOYMENT.m
 
 ## What this is *not*
 
-It is not a CMS, not a full A/B testing platform, and not a stored customer-record system. It is a **self-serve diagnostic + sales teaser**: prove we understand their page, show a better version, and get them on a call.
+It is not a CMS, not a full A/B testing platform, and not a customer database of its own. It is a **self-serve diagnostic + sales teaser**: prove we understand their page, show a better version, and get them on a call. Verified emails are copied to a Google Sheet for marketing; that sheet is the lead list.
 
-We also do not train a custom model on visitor sites. Quality comes from **live evidence + Spiralyze’s tested patterns + (optional) frontier AI**.
+We also do not train a custom model on visitor sites. Quality comes from **live evidence + Spiralyze’s tested patterns + Gemini** (with the rules engine when the model is unavailable).

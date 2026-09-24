@@ -24,8 +24,8 @@ const VENDORS: {
   {
     vendor: "Spiralyze",
     script: /spiralyze/i,
-    global: /\b(?:spz|Spiralyze|__SPZ__)\b/,
-    classId: /\bspz[-_]/i,
+    global: /\b(?:Spiralyze|__SPZ__)\b|\bwindow\.spz\b/,
+    classId: /\bspz[-_]\d/,
   },
   {
     vendor: "Optimizely",
@@ -200,8 +200,8 @@ export function inspectAndHideLiveTestInPage(): LiveTestInspectResult {
       {
         vendor: "Spiralyze",
         script: /spiralyze/i,
-        global: /\b(?:spz|Spiralyze|__SPZ__)\b/,
-        classId: /\bspz[-_]/i,
+        global: /\b(?:Spiralyze|__SPZ__)\b|\bwindow\.spz\b/,
+        classId: /\bspz[-_]\d/,
       },
       {
         vendor: "Optimizely",

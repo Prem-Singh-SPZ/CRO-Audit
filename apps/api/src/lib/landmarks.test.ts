@@ -61,6 +61,12 @@ describe("inferLandmarkId", () => {
   it("maps form fields to form", () => {
     expect(inferLandmarkId("Email field friction")).toBe("form");
   });
+  it("maps a hero CTA title to the button, not the hero section", () => {
+    expect(inferLandmarkId("Hero CTAs")).toBe("cta");
+  });
+  it("does not pin nearby copy onto the headline or the form", () => {
+    expect(inferLandmarkId("Benefit Copy (Below Form)")).toBeNull();
+  });
 });
 
 describe("applyLandmarkPins", () => {
@@ -114,5 +120,55 @@ describe("applyLandmarkPins", () => {
     );
     expect(out.issues[0]?.annotation?.x).toBe(0.22);
     expect(out.issues[0]?.annotation?.element).toBe("form");
+  });
+
+  it("does not replace a CTA pin with the whole hero section", () => {
+    const out = applyLandmarkPins(
+      reportWith([
+        {
+          category: "cta",
+          title: "Hero CTAs",
+          description: "The hero buttons compete with the headline.",
+          whyItMatters: "",
+          severity: "HIGH",
+          confidence: 80,
+          businessImpact: "",
+          suggestedFix: "teaser",
+          estimatedConversionImpact: "n/a",
+          annotation: {
+            device: "desktop",
+            x: 0.4,
+            y: 0.2,
+            width: 0.12,
+            height: 0.04,
+            element: "hero",
+          },
+        },
+      ]),
+      [
+        ...landmarks,
+        {
+          id: "hero" as const,
+          label: "Hero",
+          text: "Track AI Impact",
+          x: 0.5,
+          y: 0.4,
+          width: 1,
+          height: 0.5,
+        },
+        {
+          id: "cta" as const,
+          label: "Primary call to action",
+          text: "Request a demo",
+          x: 0.48,
+          y: 0.18,
+          width: 0.12,
+          height: 0.03,
+        },
+      ]
+    );
+    expect(out.issues[0]?.annotation?.element).toBe("cta");
+    expect(out.issues[0]?.annotation?.y).toBe(0.18);
+    expect(out.issues[0]?.annotation?.width).toBe(0.12);
   });
 });

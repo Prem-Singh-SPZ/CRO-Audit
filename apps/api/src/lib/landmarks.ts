@@ -6,38 +6,22 @@ import {
   type ReportJson,
 } from "@cro/shared";
 
-const KIND_HINT: Record<string, LandmarkId> = {
-  headline: "h1",
-  h1: "h1",
-  title: "h1",
-  subhead: "h1",
-  "value prop": "h1",
-  messaging: "h1",
-  copy: "h1",
-  hero: "hero",
-  cta: "cta",
-  button: "cta",
-  submit: "cta",
-  form: "form",
-  email: "form",
-  field: "form",
-  capture: "form",
-  nav: "nav",
-  menu: "nav",
-  header: "nav",
-  footer: "footer",
-  testimonial: "testimonials",
-  review: "testimonials",
-  social: "testimonials",
-  proof: "testimonials",
-  pric: "pricing",
-};
-
 export function inferLandmarkId(text: string): LandmarkId | null {
   const t = text.toLowerCase();
-  for (const [hint, id] of Object.entries(KIND_HINT)) {
-    if (t.includes(hint)) return id;
+  // Specific controls first. "Hero CTAs" must not land on the hero section,
+  // and "Benefit Copy (Below Form)" must not land on the headline.
+  if (/\b(ctas?|buttons?|submits?)\b/.test(t)) return "cta";
+  if (/\b(headlines?|\bh1\b|subheads?)\b/.test(t)) return "h1";
+  if (
+    /\b(forms?|emails?|fields?|sign-?ups?)\b/.test(t) &&
+    !/\b(below|above|near|under|beside|next to)\b/.test(t)
+  ) {
+    return "form";
   }
+  if (/\b(testimonials?|reviews?)\b/.test(t)) return "testimonials";
+  if (/\b(nav|menu|navigation)\b/.test(t)) return "nav";
+  if (/\bfooter\b/.test(t)) return "footer";
+  if (/\bpric(e|ing)\b/.test(t)) return "pricing";
   return null;
 }
 
@@ -57,15 +41,16 @@ export function applyLandmarkPins(
     ...report,
     issues: report.issues.map((issue) => {
       const fromAnn = issue.annotation;
+      const explicit =
+        fromAnn?.element && fromAnn.element !== "hero"
+          ? landmarkById(landmarks, fromAnn.element)
+          : undefined;
+      const guessed = inferLandmarkId(issue.title);
       const named =
-        (fromAnn?.element && landmarkById(landmarks, fromAnn.element)) ||
-        (() => {
-          const guessed = inferLandmarkId(
-            `${issue.title} ${issue.category} ${issue.description}`
-          );
-          return guessed ? landmarkById(landmarks, guessed) : undefined;
-        })();
-      if (!named) return issue;
+        explicit || (guessed ? landmarkById(landmarks, guessed) : undefined);
+      // The hero landmark is the whole section. Pinning an issue there
+      // covers the headline, the buttons, and the graphic at once.
+      if (!named || named.id === "hero") return issue;
       return {
         ...issue,
         annotation: {
@@ -122,12 +107,31 @@ function measureInPage(pageWidth: number, pageHeight: number): LandmarkBox[] {
     const r = el.getBoundingClientRect();
     return r.width >= 8 && r.height >= 8;
   };
+  const contentRect = (el: HTMLElement) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const rects = Array.from(range.getClientRects()).filter(
+      (r) => r.width >= 8 && r.height >= 8
+    );
+    if (rects.length === 0) return el.getBoundingClientRect();
+    const top = Math.min(...rects.map((r) => r.top));
+    const left = Math.min(...rects.map((r) => r.left));
+    const right = Math.max(...rects.map((r) => r.right));
+    const bottom = Math.max(...rects.map((r) => r.bottom));
+    return {
+      top,
+      left,
+      width: right - left,
+      height: bottom - top,
+    };
+  };
   const box = (
     el: HTMLElement,
     id: LandmarkBox["id"],
-    label: string
+    label: string,
+    tight = false
   ): LandmarkBox | null => {
-    const r = el.getBoundingClientRect();
+    const r = tight ? contentRect(el) : el.getBoundingClientRect();
     const top = r.top + window.scrollY;
     const left = r.left + window.scrollX;
     if (top > pageHeight || left > pageWidth) return null;
@@ -156,13 +160,18 @@ function measureInPage(pageWidth: number, pageHeight: number): LandmarkBox[] {
   };
 
   const out: LandmarkBox[] = [];
-  const push = (el: HTMLElement | null, id: LandmarkBox["id"], label: string) => {
+  const push = (
+    el: HTMLElement | null,
+    id: LandmarkBox["id"],
+    label: string,
+    tight = false
+  ) => {
     if (!el) return;
-    const b = box(el, id, label);
+    const b = box(el, id, label, tight);
     if (b) out.push(b);
   };
 
-  push(first(["h1"]), "h1", "Primary headline");
+  push(first(["h1"]), "h1", "Primary headline", true);
   push(
     first(["header nav", "nav", "header", "[role=navigation]"]),
     "nav",
@@ -175,18 +184,20 @@ function measureInPage(pageWidth: number, pageHeight: number): LandmarkBox[] {
     formEl = parent instanceof HTMLElement ? parent : field;
   }
   push(formEl, "form", "Primary form");
-  push(
-    first([
-      "a[class*=cta i]",
-      "button[class*=cta i]",
-      "a[class*=primary i]",
-      "button[type=submit]",
-      "form button",
-      "header a[href]",
-    ]),
-    "cta",
-    "Primary call to action"
-  );
+  const cta = Array.from(
+    document.querySelectorAll(
+      "a[class*=cta i], button[class*=cta i], a[class*=primary i], button[type=submit], form button, a[class*=button i]"
+    )
+  ).find((el): el is HTMLElement => {
+    if (!(el instanceof HTMLElement) || !visible(el)) return false;
+    const text = (el.innerText || el.getAttribute("aria-label") || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (text.length < 2 || text.length > 48) return false;
+    const r = el.getBoundingClientRect();
+    return r.height >= 16 && r.height <= 88 && r.width >= 48 && r.width <= 480;
+  });
+  push(cta ?? null, "cta", "Primary call to action", true);
   push(
     first(["footer", "[role=contentinfo]"]),
     "footer",

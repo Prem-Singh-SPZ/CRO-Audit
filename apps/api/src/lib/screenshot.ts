@@ -314,9 +314,6 @@ async function openCaptureTab(
       !usesLocalChrome() &&
       shouldAbortHeavyCaptureRequest(href, req.resourceType(), pageHost)
     ) {
-      // #region agent log
-      if (/varify/i.test(href)) fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"pre-fix",hypothesisId:"D",location:"screenshot.ts:abort",message:"aborted varify request",data:{resourceType:req.resourceType()},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       req.abort().catch(() => {});
       return;
     }
@@ -549,9 +546,6 @@ async function captureScreenshotsOnce(
     // A force-original preview param only works if the testing snippet runs.
     const forceOriginal = urlForcesOriginalControl(url);
     const firstJs = usesLocalChrome() || forceOriginal;
-    // #region agent log
-    fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"pre-fix",hypothesisId:"C",location:"screenshot.ts:before-goto",message:"capture navigation setup",data:{search:(()=>{try{return new URL(url).search}catch{return ""}})(),forceOriginal,firstJs,localChrome:usesLocalChrome()},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     const page = await openCaptureTab(browser, url, desktopUa, firstJs);
 
     let status = 0;
@@ -560,9 +554,6 @@ async function captureScreenshotsOnce(
         waitUntil: "domcontentloaded",
       });
       status = response?.status() ?? 0;
-      // #region agent log
-      fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"pre-fix",hypothesisId:"B",location:"screenshot.ts:after-goto",message:"landed url after first navigation",data:{status,landedSearch:(()=>{try{return new URL(page.url()).search}catch{return ""}})(),redirects:(response?.request().redirectChain()??[]).map((r)=>{try{return new URL(r.url()).search}catch{return r.url().slice(0,80)}})},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
     } catch (err) {
       console.warn("[screenshot] navigation issue (continuing):", err);
     }
@@ -597,10 +588,7 @@ async function captureScreenshotsOnce(
       try {
         const upgrade = await openCaptureTab(browser, url, desktopUa, true);
         try {
-          const upgradeResponse = await upgrade.goto(url, { waitUntil: "domcontentloaded" });
-          // #region agent log
-          fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"pre-fix",hypothesisId:"C",location:"screenshot.ts:js-upgrade",message:"js upgrade navigation",data:{landedSearch:(()=>{try{return new URL(upgrade.url()).search}catch{return ""}})(),status:upgradeResponse?.status()??0},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion
+          await upgrade.goto(url, { waitUntil: "domcontentloaded" });
           const pack = await captureServerlessControl(upgrade);
           if (pack.control) {
             screenshots.length = 0;
@@ -714,60 +702,17 @@ async function captureScreenshotsOnce(
     }
 
     if (!blockedReason) {
-      // #region agent log
-      const experimentProbe = await raceTimeout(
-        page.evaluate(() => {
-          const hosts = Array.from(document.scripts)
-            .map((s) => s.src)
-            .filter(Boolean)
-            .map((src) => {
-              try {
-                return new URL(src).hostname;
-              } catch {
-                return "";
-              }
-            })
-            .filter((host) => /varify|spiralyze|spz|optimizely|vwo|convert/i.test(host));
-          const body = Array.from(document.scripts)
-            .map((s) => s.textContent || "")
-            .join("\n");
-          return {
-            search: location.search,
-            hosts: hosts.slice(0, 8),
-            globals: ["spz", "Spiralyze", "__SPZ__", "varify"].filter(
-              (key) => (window as unknown as Record<string, unknown>)[key] != null
-            ),
-            spzNodes: document.querySelectorAll("[class*='spz' i], [id*='spz' i]").length,
-            varifyNodes: document.querySelectorAll("[class*='varify' i], [id*='varify' i]").length,
-            bodyMentionsSpiralyze: /spiralyze/i.test(body),
-            bodyMentionsVarify: /varify/i.test(body),
-            h1: (document.querySelector("h1")?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80),
-          };
-        }),
-        PAGE_OP_TIMEOUT_MS,
-        null
-      );
-      fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"post-fix",hypothesisId:"F",location:"screenshot.ts:experiment-probe",message:"what marked the page as a live test",data:experimentProbe,timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       const live = await raceTimeout(
         page.evaluate(inspectAndHideLiveTestInPage),
         PAGE_OP_TIMEOUT_MS,
         { vendor: null, hidden: 0 }
       );
-      const forcedOriginal =
-        forceOriginal || urlForcesOriginalControl(finalUrl);
       const detected = live.vendors?.length
         ? live.vendors
         : live.vendor
           ? [live.vendor]
           : [];
       const stillRunning = liveTestVendorAfterOptOut(detected, url, finalUrl);
-      // #region agent log
-      fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"pre-fix",hypothesisId:"E",location:"screenshot.ts:live-test",message:"live test decision",data:{vendor:live.vendor,forcedOriginal,finalSearch:(()=>{try{return new URL(finalUrl).search}catch{return ""}})()},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-      // #region agent log
-      fetch("http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe",{method:"POST",headers:{"Content-Type":"application/json","X-Debug-Session-Id":"a21f4c"},body:JSON.stringify({sessionId:"a21f4c",runId:"post-fix",hypothesisId:"E",location:"screenshot.ts:live-test-remaining",message:"vendor after opt-out",data:{detected,stillRunning},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       if (stillRunning) {
         liveTest = { vendor: stillRunning };
         console.log(
