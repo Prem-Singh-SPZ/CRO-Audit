@@ -325,7 +325,8 @@ export const FORM_FIX_PATTERNS: FormFixPattern[] = [
     name: "Form Over UI With Copy",
     brief: `LAYOUT PATTERN — FORM OVER UI WITH COPY:
 - Existing page UI stays visible (slightly dimmed is OK) in the background.
-- Overlay card is a TWO-column white panel: (1) 2-line H1 + exactly 3 checkmark bullets, (2) compact form with a SMALL form title.
+- Overlay card is a SIDE-BY-SIDE two-column white panel: LEFT column = 2-line H1 + exactly 3 checkmark bullets; RIGHT column = compact form with a SMALL form title.
+- The copy column and the form column sit NEXT TO each other — never copy stacked above the form. This is a desktop layout.
 - Not a 4-line H1. The overlay is a card, not the entire viewport.`,
   },
   {
@@ -365,7 +366,7 @@ export const FORM_FIX_PATTERNS: FormFixPattern[] = [
     name: "Form in Modal",
     brief: `LAYOUT PATTERN — FORM IN MODAL:
 - Page UI is DIMMED / blurred behind a centered modal dialog (close X, backdrop).
-- Modal contains the form (SMALL form title) and optionally a 2-line H1 + exactly 3 bullets inside the modal.
+- Modal contains the form with a SMALL form title. If copy is shown, the modal becomes SIDE-BY-SIDE two columns: copy (2-line H1 + exactly 3 bullets) on the LEFT, form on the RIGHT — never copy stacked above the form on desktop.
 - Looks like a real product modal, not a full-page form.`,
   },
   {

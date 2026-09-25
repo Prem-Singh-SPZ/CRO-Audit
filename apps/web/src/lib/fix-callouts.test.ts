@@ -100,6 +100,28 @@ describe("buildChangeCallouts", () => {
     );
   });
 
+  it("reseats boxes the locator glued to the bottom edge into the hero", () => {
+    const pins = buildChangeCallouts(
+      [issue({ id: "h", title: "Headline is vague" })],
+      1,
+      {
+        headline: { x: 0.298, y: 1, w: 0.376, h: 0.231 },
+        bullets: { x: 0.283, y: 1, w: 0.345, h: 0.135 },
+        cta: { x: 0.726, y: 1, w: 0.325, h: 0.301 },
+      },
+      "m1"
+    );
+    const headline = pins.find((p) => p.title === "Clearer headline");
+    const bullets = pins.find((p) => p.title === "Scannable benefits");
+    const cta = pins.find((p) => p.title === "Stronger call to action");
+    expect(headline?.annotationY).toBeGreaterThan(0.35);
+    expect(headline?.annotationY).toBeLessThan(0.55);
+    expect(bullets?.annotationY ?? 0).toBeGreaterThan(headline?.annotationY ?? 1);
+    expect(bullets?.annotationY).toBeLessThan(0.75);
+    expect(cta?.annotationY).toBeLessThan(0.7);
+    expect(cta?.annotationX).toBeCloseTo(0.726);
+  });
+
   it("moves a headline box off the bottom edge up onto the title", () => {
     const pins = buildChangeCallouts(
       [issue({ id: "h", title: "Headline is vague" })],

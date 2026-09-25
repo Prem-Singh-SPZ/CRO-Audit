@@ -137,6 +137,28 @@ describe("conceptCopy", () => {
     expect(copy.bullets[0]).toMatch(/CTA/i);
   });
 
+  it("never shows terse diagnostic titles like 'h1' as card copy", () => {
+    const copy = conceptCopy([
+      issue({ id: "a", title: "h1", category: "Copy", severity: "HIGH" }),
+      issue({ id: "b", title: "Hero Copy", category: "Copy" }),
+      issue({ id: "c", title: "Primary Form CTA", category: "CTA" }),
+    ]);
+    expect(copy.headline).not.toBe("h1");
+    expect(copy.headline.split(" ").length).toBeGreaterThanOrEqual(4);
+    expect(copy.bullets).toHaveLength(3);
+    for (const b of copy.bullets) {
+      expect(b.split(" ").length).toBeGreaterThanOrEqual(4);
+    }
+  });
+
+  it("falls back to the default headline when a title maps to nothing", () => {
+    const copy = conceptCopy([
+      issue({ id: "a", title: "Misc", category: "Other" }),
+    ]);
+    expect(copy.headline).toBe("Make the offer unmistakable");
+    expect(copy.bullets).toHaveLength(3);
+  });
+
   it("clips long strings with an ellipsis", () => {
     expect(clipCopy("abcdefghij", 6)).toBe("abcde…");
   });

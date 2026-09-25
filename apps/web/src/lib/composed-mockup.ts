@@ -54,6 +54,32 @@ export function composeMockup(data: ReportResponse): MockupDto | null {
   };
 }
 
+const HEADLINE_FALLBACK = "Make the offer unmistakable";
+
+// Audit issues can carry terse diagnostic titles ("h1", "Hero Copy",
+// "Primary Form CTA"). Those are labels, not copy — shown raw on the concept
+// card they read as broken. Map them to a human line by topic instead.
+const TERSE_TITLE_TEMPLATES: [RegExp, string][] = [
+  [
+    /\bh1\b|headline|hero|value prop|\bcopy\b|messag/i,
+    "A headline that says what you do in one clear line",
+  ],
+  [/\bcta\b|button|call to action/i, "One primary call to action, value-led"],
+  [/form|field|lead|email|capture/i, "A shorter form that only asks what matters"],
+  [/trust|proof|testimonial|logo|review|badge/i, "Proof and logos next to the ask"],
+  [/nav|menu|header/i, "A header stripped to logo and one action"],
+];
+
+/** A title reads as copy only if it's an actual phrase, not a label. */
+function humanizeTitle(title: string): string | null {
+  const t = title.replace(/\s+/g, " ").trim();
+  if (t.length >= 16 && t.split(" ").length >= 4) return t;
+  for (const [re, text] of TERSE_TITLE_TEMPLATES) {
+    if (re.test(t)) return text;
+  }
+  return null;
+}
+
 export function conceptCopy(issues: IssueDto[]): {
   headline: string;
   bullets: string[];
@@ -65,13 +91,22 @@ export function conceptCopy(issues: IssueDto[]): {
     /copy|clarity|headline|hero|value|message/i.test(`${i.category} ${i.title}`)
   );
   const lead = copyish ?? ranked[0];
-  const headline = clipCopy(lead?.title ?? "Make the offer unmistakable", 72);
-  const bullets = ranked
-    .filter((i) => i !== lead)
-    .slice(0, 3)
-    .map((i) => clipCopy(i.title, 56));
-  while (bullets.length < 3) {
-    bullets.push(FILLER_BULLETS[bullets.length] ?? FILLER_BULLETS[0]);
+  const headline = clipCopy(
+    (lead ? humanizeTitle(lead.title) : null) ?? HEADLINE_FALLBACK,
+    72
+  );
+  const bullets: string[] = [];
+  for (const i of ranked) {
+    if (i === lead || bullets.length >= 3) continue;
+    const line = humanizeTitle(i.title);
+    if (!line) continue;
+    const clipped = clipCopy(line, 56);
+    if (clipped === headline || bullets.includes(clipped)) continue;
+    bullets.push(clipped);
+  }
+  for (const filler of FILLER_BULLETS) {
+    if (bullets.length >= 3) break;
+    if (!bullets.includes(filler)) bullets.push(filler);
   }
   return { headline, bullets };
 }

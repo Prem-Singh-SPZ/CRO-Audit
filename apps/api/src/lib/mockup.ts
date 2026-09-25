@@ -203,50 +203,86 @@ export async function generateFixMockup(
         )
       );
 
-    let res = await requestOnce();
-    if (res.status === 429 || res.status >= 500) {
-      console.warn("[mockup] retrying Gemini image after HTTP", res.status);
-      await sleep(800);
-      res = await requestOnce();
+    // A rejected render (clipped, no CTA, gibberish, wrong fields) gets ONE
+    // re-render before this pattern gives up — image generation is
+    // non-deterministic and a second roll usually complies. API errors do
+    // not re-render; only compliance rejections pay the extra image call.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let res = await requestOnce();
+      if (res.status === 429 || res.status >= 500) {
+        console.warn("[mockup] retrying Gemini image after HTTP", res.status);
+        await sleep(800);
+        res = await requestOnce();
+      }
+
+      if (!res.ok) {
+        console.error("[mockup] Gemini image HTTP", res.status, await safeText(res));
+        return null;
+      }
+
+      const json = (await res.json()) as any;
+      const parts: any[] = json?.candidates?.[0]?.content?.parts ?? [];
+      const imagePart = parts.find((p) => p?.inlineData?.data);
+      if (!imagePart) {
+        console.error(
+          "[mockup] Gemini returned no image (finishReason=" +
+            json?.candidates?.[0]?.finishReason +
+            ")"
+        );
+        return null;
+      }
+
+      const mimeType: string = imagePart.inlineData.mimeType || "image/png";
+      const data: string = imagePart.inlineData.data;
+      const isHero = pattern.name === "Hero";
+      const { regions, checks } = await inspectMockup(apiKey, mimeType, data);
+
+      const expectedFields =
+        input.leadForm?.present === true && input.leadForm.source === "fields"
+          ? input.leadForm.fields.length
+          : null;
+      const { hard, soft } = mockupComplianceFailures(checks, expectedFields);
+      if (
+        SIDE_BY_SIDE_COPY_PATTERNS.has(pattern.name) &&
+        copyStackedAboveForm(regions)
+      ) {
+        soft.push("copy is stacked above the form (brief asks for side-by-side)");
+      }
+      if (soft.length > 0) {
+        console.warn(
+          `[mockup] compliance warnings (${pattern.name}):`,
+          soft.join("; ")
+        );
+      }
+      if (hard.length > 0) {
+        console.warn(
+          `[mockup] rejected render (${pattern.name}, attempt ${attempt + 1}):`,
+          hard.join("; ")
+        );
+        if (attempt === 0) {
+          console.warn("[mockup] re-rendering once after rejection");
+          continue;
+        }
+        return null;
+      }
+
+      return {
+        device: "desktop",
+        mimeType,
+        dataUri: `data:${mimeType};base64,${data}`,
+        // The generated image is reflowed by the model; the UI renders it
+        // responsively (w-full h-auto), so exact source dims aren't needed.
+        width: 0,
+        height: 0,
+        variant: isHero ? "hero" : "pattern",
+        patternName: isHero ? undefined : pattern.name,
+        uplift: pattern.uplift,
+        winRate: pattern.winRate,
+        sampleSize: pattern.sampleSize,
+        regions,
+      };
     }
-
-    if (!res.ok) {
-      console.error("[mockup] Gemini image HTTP", res.status, await safeText(res));
-      return null;
-    }
-
-    const json = (await res.json()) as any;
-    const parts: any[] = json?.candidates?.[0]?.content?.parts ?? [];
-    const imagePart = parts.find((p) => p?.inlineData?.data);
-    if (!imagePart) {
-      console.error(
-        "[mockup] Gemini returned no image (finishReason=" +
-          json?.candidates?.[0]?.finishReason +
-          ")"
-      );
-      return null;
-    }
-
-    const mimeType: string = imagePart.inlineData.mimeType || "image/png";
-    const data: string = imagePart.inlineData.data;
-    const isHero = pattern.name === "Hero";
-    const regions = await locateMockupRegions(apiKey, mimeType, data);
-
-    return {
-      device: "desktop",
-      mimeType,
-      dataUri: `data:${mimeType};base64,${data}`,
-      // The generated image is reflowed by the model; the UI renders it
-      // responsively (w-full h-auto), so exact source dims aren't needed.
-      width: 0,
-      height: 0,
-      variant: isHero ? "hero" : "pattern",
-      patternName: isHero ? undefined : pattern.name,
-      uplift: pattern.uplift,
-      winRate: pattern.winRate,
-      sampleSize: pattern.sampleSize,
-      regions,
-    };
+    return null;
   } catch (err) {
     console.error("[mockup] generation failed:", err);
     return null;
@@ -290,6 +326,8 @@ FORM FIELD STYLING (when a form is present):
 OUTPUT FORMAT (critical for clarity):
 - Render a FLAT, full-bleed desktop website screenshot that fills the entire frame edge to edge. It must look like a real browser screenshot of the page — NOT a photo of a laptop/monitor, NOT placed inside a device frame, NOT a scene or 3D mockup, no drop shadows around it, no borders.
 - Redesign ONLY the first screenful (above the fold). Do NOT try to recreate the entire long page — concentrating on one screenful keeps every element large, sharp, and readable.
+- NOTHING may be clipped by the frame: the complete layout — headline, bullets, the ENTIRE form, and its submit button — fits fully inside the image. If the form is long, compact the field spacing; never let the bottom of the form or the button run off the edge.
+- The primary submit BUTTON must be fully visible as a real filled button with its label. It is never replaced by a phone prefix, an input, or any other control as the last element.
 
 TEXT QUALITY (critical):
 - Every word of text must be sharp, high-contrast, and SPELLED CORRECTLY with real dictionary words. Re-read all text before finalizing.
@@ -435,15 +473,128 @@ function asUnit(value: unknown): number | null {
   return Math.min(1, Math.max(0, n));
 }
 
+/** What the inspection pass could count on the finished render. */
+export interface MockupChecks {
+  formFieldCount: number | null;
+  headlineLines: number | null;
+  bulletCount: number | null;
+  navItemCount: number | null;
+  gibberishText: boolean | null;
+  primaryButtonVisible: boolean | null;
+  contentCutOff: boolean | null;
+}
+
+export function parseMockupChecks(value: unknown): MockupChecks | null {
+  if (!value || typeof value !== "object") return null;
+  const rec = value as Record<string, unknown>;
+  const count = (v: unknown): number | null => {
+    if (typeof v !== "number" && typeof v !== "string") return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+  };
+  return {
+    formFieldCount: count(rec.formFieldCount),
+    headlineLines: count(rec.headlineLines),
+    bulletCount: count(rec.bulletCount),
+    navItemCount: count(rec.navItemCount),
+    gibberishText:
+      typeof rec.gibberishText === "boolean" ? rec.gibberishText : null,
+    primaryButtonVisible:
+      typeof rec.primaryButtonVisible === "boolean"
+        ? rec.primaryButtonVisible
+        : null,
+    contentCutOff:
+      typeof rec.contentCutOff === "boolean" ? rec.contentCutOff : null,
+  };
+}
+
+/** Patterns whose brief mandates copy NEXT TO the form, never above it. */
+const SIDE_BY_SIDE_COPY_PATTERNS = new Set([
+  "Form Over UI With Copy",
+  "Form in Modal",
+]);
+
 /**
- * After the redesign image exists, ask a vision model where the headline,
- * benefits, and primary button actually are. Missing keys stay unannotated.
+ * Geometric stacked-copy detector, computed from the measured regions (no
+ * extra AI call). Side-by-side columns have distinct x-ranges; a stacked
+ * layout puts the headline in the same horizontal band as the form/button
+ * and above it.
  */
-async function locateMockupRegions(
+export function copyStackedAboveForm(regions: MockupRegions): boolean {
+  const head = regions.headline;
+  const target = regions.cta;
+  if (!head || !target) return false;
+  const headLeft = head.x - head.w / 2;
+  const headRight = head.x + head.w / 2;
+  const targetLeft = target.x - target.w / 2;
+  const targetRight = target.x + target.w / 2;
+  const overlap =
+    Math.min(headRight, targetRight) - Math.max(headLeft, targetLeft);
+  const minWidth = Math.min(head.w, target.w);
+  return overlap > minWidth * 0.5 && head.y < target.y;
+}
+
+/**
+ * Gate a generated render on the inspection counts. Fail-open: missing or
+ * unreadable checks never reject, so verification cannot reduce report
+ * availability. Hard failures discard the render; soft ones are log-only
+ * (vision counting is imperfect — do not throw away good renders over a
+ * miscount of one bullet or nav item).
+ */
+export function mockupComplianceFailures(
+  checks: MockupChecks | null,
+  expectedFields: number | null
+): { hard: string[]; soft: string[] } {
+  const hard: string[] = [];
+  const soft: string[] = [];
+  if (!checks) return { hard, soft };
+
+  if (checks.gibberishText === true) {
+    hard.push("gibberish or misspelled text detected");
+  }
+  if (checks.primaryButtonVisible === false) {
+    hard.push("no visible primary button / CTA");
+  }
+  if (checks.contentCutOff === true) {
+    hard.push("layout is clipped by the image edge");
+  }
+  if (checks.headlineLines != null && checks.headlineLines >= 4) {
+    hard.push(`headline is ${checks.headlineLines} lines (max 2)`);
+  } else if (checks.headlineLines === 3) {
+    soft.push("headline is 3 lines (brief asks for 2)");
+  }
+  if (expectedFields != null && checks.formFieldCount != null) {
+    const diff = Math.abs(checks.formFieldCount - expectedFields);
+    if (diff >= 2) {
+      hard.push(
+        `form shows ${checks.formFieldCount} fields, page has ${expectedFields}`
+      );
+    } else if (diff === 1) {
+      soft.push(
+        `form shows ${checks.formFieldCount} fields, page has ${expectedFields}`
+      );
+    }
+  }
+  if (checks.bulletCount != null && checks.bulletCount !== 3) {
+    soft.push(`${checks.bulletCount} benefit bullets (brief asks for 3)`);
+  }
+  if (checks.navItemCount != null && checks.navItemCount > 0) {
+    soft.push(`${checks.navItemCount} nav items besides the logo`);
+  }
+  return { hard, soft };
+}
+
+/**
+ * After the redesign image exists, one vision call both locates the headline,
+ * benefits, and primary button (for callouts) and counts what the render
+ * actually contains (for the compliance gate). Missing keys stay unannotated;
+ * a failed call returns empty regions and null checks (fail-open).
+ */
+async function inspectMockup(
   apiKey: string,
   mimeType: string,
   data: string
-): Promise<MockupRegions> {
+): Promise<{ regions: MockupRegions; checks: MockupChecks | null }> {
   const model =
     process.env.MOCKUP_LOCATE_MODEL ||
     process.env.GEMINI_MODEL ||
@@ -466,12 +617,20 @@ async function locateMockupRegions(
                   parts: [
                     {
                       text: `This image is a finished desktop webpage redesign. Return JSON only:
-{"headline":{"x":0,"y":0,"w":0,"h":0}|null,"bullets":{"x":0,"y":0,"w":0,"h":0}|null,"cta":{"x":0,"y":0,"w":0,"h":0}|null}
+{"headline":{"x":0,"y":0,"w":0,"h":0}|null,"bullets":{"x":0,"y":0,"w":0,"h":0}|null,"cta":{"x":0,"y":0,"w":0,"h":0}|null,"checks":{"formFieldCount":0,"headlineLines":0,"bulletCount":0,"navItemCount":0,"gibberishText":false,"primaryButtonVisible":false,"contentCutOff":false}}
 x and y are the CENTER of the element as fractions of image width and height (0-1). w and h are the element size as fractions.
 headline = the main H1 text block only.
 bullets = the short benefit list or trust line directly under the headline. null if absent.
 cta = the filled primary BUTTON only, tight on the button pixels. If the primary action is a form, box that form panel. null if you cannot see a button or form.
-Use null for anything you cannot see. Never box empty space, logos, or the whole hero.`,
+Use null for anything you cannot see. Never box empty space, logos, or the whole hero.
+checks (count carefully, use null for anything you cannot judge):
+- formFieldCount: number of visible form INPUT controls (text boxes, selects, textareas — not the submit button). 0 if no form.
+- headlineLines: how many rendered text lines the main H1 wraps to.
+- bulletCount: number of short benefit bullets under the headline. 0 if none.
+- navItemCount: header/nav links or buttons besides the logo. 0 if the header is logo-only.
+- gibberishText: true only if any visible word is misspelled, garbled, or not a real word.
+- primaryButtonVisible: true only if a real filled submit/CTA BUTTON with a text label is fully visible. A phone country-prefix, an input box, or a half-cropped button does not count.
+- contentCutOff: true if any form field, button, headline, or text block is visibly clipped by an edge of the image (e.g. the form continues past the bottom).`,
                     },
                     { inlineData: { mimeType, data } },
                   ],
@@ -487,8 +646,8 @@ Use null for anything you cannot see. Never box empty space, logos, or the whole
       20_000
     );
     if (!res.ok) {
-      console.warn("[mockup] region locate HTTP", res.status, "model", model);
-      return {};
+      console.warn("[mockup] inspection HTTP", res.status, "model", model);
+      return { regions: {}, checks: null };
     }
     const json = (await res.json()) as {
       candidates?: { content?: { parts?: { text?: string }[] } }[];
@@ -496,9 +655,18 @@ Use null for anything you cannot see. Never box empty space, logos, or the whole
     const text = json.candidates?.[0]?.content?.parts
       ?.map((p) => p.text ?? "")
       .join("");
-    return parseMockupRegions(text ?? "");
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(text ?? "");
+    } catch {
+      return { regions: {}, checks: null };
+    }
+    return {
+      regions: parseMockupRegions(parsed),
+      checks: parseMockupChecks((parsed as Record<string, unknown>)?.checks),
+    };
   } catch (err) {
-    console.warn("[mockup] region locate failed:", (err as Error)?.message ?? err);
-    return {};
+    console.warn("[mockup] inspection failed:", (err as Error)?.message ?? err);
+    return { regions: {}, checks: null };
   }
 }

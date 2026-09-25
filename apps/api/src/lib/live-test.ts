@@ -283,6 +283,31 @@ export function inspectAndHideLiveTestInPage(): LiveTestInspectResult {
       if (!found.includes(v.vendor)) found.push(v.vendor);
     }
   }
+
+  // VWO's SmartCode sits on every page, and many sites run it only for
+  // heatmaps, recordings, and insights. Count VWO only when its campaign
+  // list has a running experiment. No campaign list → keep the snippet
+  // signal (cannot tell).
+  if (found.includes("VWO")) {
+    const exp = (window as unknown as Record<string, unknown>)._vwo_exp;
+    if (exp && typeof exp === "object") {
+      const analyticsOnly = /^(ANALYZE_|INSIGHTS_|SURVEY|FEEDBACK|FUNNEL|FORM_ANALYSIS)/i;
+      const runsExperiment = Object.values(exp as Record<string, unknown>).some(
+        (c) => {
+          if (!c || typeof c !== "object") return false;
+          const rec = c as Record<string, unknown>;
+          const type = String(rec.type ?? "");
+          const status = String(rec.status ?? "");
+          return (
+            status.toUpperCase() === "RUNNING" &&
+            type !== "" &&
+            !analyticsOnly.test(type)
+          );
+        }
+      );
+      if (!runsExperiment) found.splice(found.indexOf("VWO"), 1);
+    }
+  }
   const vendor = found[0] ?? null;
 
   const hideSelectors = [

@@ -64,7 +64,7 @@ Results are a **hybrid** of four things:
 
 **Right now (local `.env`):** `AI_PROVIDER=gemini`. The live models are **`gemini-3.1-pro-preview`** (audit, section critic, mockup region boxes) and **`gemini-3-pro-image-preview`** (mockup image). OpenAI and Anthropic are wired in the code but have no keys here, so if Gemini fails we fall back to **`mock-ai.ts`**, not GPT or Claude. If those keys were added, the API would try them before the rules engine.
 
-Bot-blocked pages that we cannot screenshot skip Gemini on purpose and use the honest heuristic “blocked” report from **`mock-ai.ts`**.
+Bot-blocked pages get one retry through **Bright Data's Scraping Browser** (residential IPs + challenge solving, `BRIGHTDATA_WS_ENDPOINT`, retry-only so per-GB costs apply only to captures that would otherwise fail). If that also fails we fall back to an Internet Archive snapshot, and finally to the honest heuristic “blocked” report from **`mock-ai.ts`** — Gemini is skipped on purpose so we never annotate a security-check page.
 
 ---
 

@@ -69,6 +69,7 @@ or via `--set-env-vars` / Secret Manager:
 | `GOOGLE_PAGESPEED_API_KEY` | optional but recommended |
 | `AI_PROVIDER` | `mock` / `openai` / `anthropic` / `gemini` |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | as needed |
+| `BRIGHTDATA_WS_ENDPOINT` | optional — Scraping Browser retry for bot-blocked captures (contains credentials; use Secret Manager) |
 | `GEMINI_*` / `MOCKUP_*` / `RATE_LIMIT_*` / `MAX_CONCURRENT_BROWSERS` | optional tuning |
 
 > Do **not** set `CHROME_EXECUTABLE_PATH` on Cloud Run — the image already uses

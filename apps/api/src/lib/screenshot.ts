@@ -148,7 +148,7 @@ const MAX_CONCURRENT_BROWSERS = Math.max(
   1,
   Number.parseInt(process.env.MAX_CONCURRENT_BROWSERS ?? "2", 10) || 2
 );
-const ACQUIRE_TIMEOUT_MS = 25_000;
+const ACQUIRE_TIMEOUT_MS = 120_000;
 
 let activeBrowsers = 0;
 const waiters: (() => void)[] = [];
@@ -280,7 +280,8 @@ async function openCaptureTab(
   browser: Browser,
   url: string,
   desktopUa: string,
-  jsEnabled: boolean
+  jsEnabled: boolean,
+  remoteBrowser = false
 ): Promise<Page> {
   const page = await browser.newPage();
   let pageHost = "";
@@ -289,17 +290,32 @@ async function openCaptureTab(
   } catch {
     pageHost = "";
   }
-  await page.setUserAgent(desktopUa);
-  await page.setExtraHTTPHeaders({ "Accept-Language": "en-US,en;q=0.9" });
+  // Bright Data manages the session's fingerprint (UA, headers, webdriver)
+  // itself and rejects overrides with "Overriding … headers forbidden".
+  if (!remoteBrowser) {
+    await page.setUserAgent(desktopUa);
+    await page.setExtraHTTPHeaders({ "Accept-Language": "en-US,en;q=0.9" });
+  }
   await page.setJavaScriptEnabled(jsEnabled);
-  if (jsEnabled) {
+  if (jsEnabled && !remoteBrowser) {
     await page.evaluateOnNewDocument(`
       Object.defineProperty(navigator, "webdriver", { get: function () { return undefined; } });
       globalThis.__name = function (fn) { return fn; };
     `);
   }
   page.setDefaultNavigationTimeout(NAV_TIMEOUT_MS);
-  await page.setRequestInterception(true);
+  // Interception saves transfer (and Bright Data per-GB cost), but a remote
+  // browser may refuse the CDP domain — never let that kill the tab.
+  try {
+    await page.setRequestInterception(true);
+  } catch (err) {
+    if (!remoteBrowser) throw err;
+    console.warn(
+      "[screenshot] request interception unavailable on remote browser:",
+      (err as Error)?.message ?? err
+    );
+    return page;
+  }
   page.on("request", (req) => {
     const href = req.url();
     if (href.startsWith("data:") || href.startsWith("blob:")) {
@@ -462,6 +478,42 @@ async function launchBrowser(): Promise<Browser> {
   });
 }
 
+function brightDataEndpoint(): string | null {
+  const ws = process.env.BRIGHTDATA_WS_ENDPOINT?.trim();
+  return ws && ws.startsWith("wss://") ? ws : null;
+}
+
+const BRIGHTDATA_CONNECT_TIMEOUT_MS = 15_000;
+
+/**
+ * Bright Data Scraping Browser — a remote Chrome reached over CDP. Used only
+ * as a retry when the direct capture is blocked or empty; per-GB billing makes
+ * it too expensive as the default path. `browser.close()` in the shared
+ * cleanup ends the remote session promptly (disconnect would leave it
+ * running and billing until Bright Data's idle timeout).
+ */
+async function connectBrightData(endpoint: string): Promise<Browser> {
+  console.log("[screenshot] connecting to Bright Data scraping browser");
+  let timer: NodeJS.Timeout | undefined;
+  const guard = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("Bright Data connect timeout")),
+      BRIGHTDATA_CONNECT_TIMEOUT_MS
+    );
+  });
+  try {
+    return await Promise.race([
+      puppeteer.connect({
+        browserWSEndpoint: endpoint,
+        defaultViewport: VIEWPORT,
+      }),
+      guard,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function desktopUserAgent(browser: Browser): Promise<string> {
   try {
     const raw = await browser.version();
@@ -499,18 +551,50 @@ async function unregisterServiceWorkers(page: Page): Promise<void> {
  */
 export async function captureScreenshots(url: string): Promise<ScreenshotResult> {
   const archiveLookup = lookupWayback(url).catch(() => null);
-  const first = await captureScreenshotsOnce(url, archiveLookup);
+  let result = await captureScreenshotsOnce(url, archiveLookup);
   // Cloud Run retry doubles a dead Chromium and blows the 200s client budget.
-  if (usesLocalChrome() && shouldRetryCapture(first)) {
+  if (usesLocalChrome() && shouldRetryCapture(result)) {
     console.warn("[screenshot] retrying empty capture");
-    return captureScreenshotsOnce(url, archiveLookup);
+    result = await captureScreenshotsOnce(url, archiveLookup);
   }
-  return first;
+  // Blocked or empty capture: one retry through Bright Data's remote browser
+  // (residential IPs + challenge solving) before the Wayback/heuristic
+  // fallbacks. Only the retry pays Bright Data's per-GB rate — never the
+  // first attempt.
+  const bdEndpoint = brightDataEndpoint();
+  const unusable =
+    result.blockedReason != null ||
+    !result.screenshots.some((s) => s.device === "desktop");
+  if (bdEndpoint && unusable) {
+    console.warn(
+      `[screenshot] direct capture unusable (${result.blockedReason ?? "no desktop shot"}) — retrying via Bright Data`
+    );
+    try {
+      const viaBd = await captureScreenshotsOnce(url, archiveLookup, bdEndpoint);
+      const bdUsable =
+        viaBd.blockedReason == null &&
+        viaBd.screenshots.some((s) => s.device === "desktop");
+      if (bdUsable) {
+        console.log("[screenshot] Bright Data retry produced a usable capture");
+        return viaBd;
+      }
+      console.warn(
+        `[screenshot] Bright Data retry also unusable (${viaBd.blockedReason ?? "no desktop shot"}) — keeping first result`
+      );
+    } catch (err) {
+      console.warn(
+        "[screenshot] Bright Data retry failed:",
+        (err as Error)?.message ?? err
+      );
+    }
+  }
+  return result;
 }
 
 async function captureScreenshotsOnce(
   url: string,
-  archiveLookup: Promise<WaybackHit | null>
+  archiveLookup: Promise<WaybackHit | null>,
+  brightDataWs: string | null = null
 ): Promise<ScreenshotResult> {
   const screenshots: Screenshot[] = [];
   let heroShot: Screenshot | null = null;
@@ -530,23 +614,35 @@ async function captureScreenshotsOnce(
   let browser: Browser | null = null;
   let desktopUa = DESKTOP_UA;
 
-  // Bound concurrent Chromium instances. If we can't get a slot in time, skip
-  // the capture — the audit still runs on crawl + PageSpeed + text.
-  const acquired = await acquireSlot();
+  // Bound concurrent local Chromium instances. Bright Data is a remote
+  // browser, so it must not wait on or consume a local slot. If a local slot
+  // never frees, skip — the audit still runs on crawl + PageSpeed + text.
+  const remote = brightDataWs != null;
+  const acquired = remote ? true : await acquireSlot();
   if (!acquired) {
     console.warn("[screenshot] skipped — capture concurrency limit reached");
     return emptyResult();
   }
 
   try {
-    browser = await launchBrowser();
+    browser = brightDataWs
+      ? await connectBrightData(brightDataWs)
+      : await launchBrowser();
     desktopUa = await desktopUserAgent(browser);
     // Cloud Run: first paint with JS off. Blue J / Webflow SIGILL's V8 during
-    // goto; SSR HTML still screenshots. Local Chrome keeps JS on.
+    // goto; SSR HTML still screenshots. Local Chrome keeps JS on. Bright
+    // Data's remote Chrome is a full browser and its challenge solving needs
+    // JS, so that path always runs with JS enabled.
     // A force-original preview param only works if the testing snippet runs.
     const forceOriginal = urlForcesOriginalControl(url);
-    const firstJs = usesLocalChrome() || forceOriginal;
-    const page = await openCaptureTab(browser, url, desktopUa, firstJs);
+    const firstJs = usesLocalChrome() || forceOriginal || brightDataWs != null;
+    const page = await openCaptureTab(
+      browser,
+      url,
+      desktopUa,
+      firstJs,
+      brightDataWs != null
+    );
 
     let status = 0;
     try {
@@ -584,7 +680,7 @@ async function captureScreenshotsOnce(
     // Upgrade to a JS-painted control when Chromium survives. If V8 SIGILL's,
     // the no-JS fold already in `screenshots` is kept. Skip when this visit
     // already ran JavaScript so a preview param can select the original.
-    if (!usesLocalChrome() && !forceOriginal && browser) {
+    if (!usesLocalChrome() && !forceOriginal && brightDataWs == null && browser) {
       try {
         const upgrade = await openCaptureTab(browser, url, desktopUa, true);
         try {
@@ -869,7 +965,11 @@ async function captureScreenshotsOnce(
       }
     }
 
+    // Bright Data sessions are limited to one domain — navigating to
+    // web.archive.org inside one throws navigate_domains_limit. The direct
+    // attempt (which this retry follows) already exhausted the archive path.
     if (
+      brightDataWs == null &&
       !isLiveCaptureUsable({
         blockedReason,
         screenshots,
@@ -932,7 +1032,7 @@ async function captureScreenshotsOnce(
     }
   } finally {
     if (browser) await browser.close().catch(() => {});
-    releaseSlot();
+    if (!remote) releaseSlot();
   }
 
   return {

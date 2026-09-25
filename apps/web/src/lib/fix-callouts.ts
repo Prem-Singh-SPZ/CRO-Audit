@@ -42,19 +42,52 @@ function calloutWhat(slot: ChangeSlot): string {
   return CHANGE_WHAT[slot];
 }
 
+/** Center glued to the bottom edge means the locator missed the element. */
+function bottomPinned(box: MockupRegionBox): boolean {
+  return box.y >= 0.98;
+}
+
+function clampBox(box: MockupRegionBox): MockupRegionBox {
+  const { w, h } = box;
+  return {
+    x: Math.max(w / 2, Math.min(1 - w / 2, box.x)),
+    y: Math.max(h / 2, Math.min(1 - h / 2, box.y)),
+    w,
+    h,
+  };
+}
+
 /**
- * Keep every measured box. A center pasted on the bottom edge is the logo
- * row, not the headline — slide that headline up into the title band and
- * pull any box fully onto the image.
+ * Keep measured width and horizontal position. When the locator pasted a
+ * center on the bottom edge, stack the headline and benefits in the hero
+ * and sit the button beside that stack.
  */
-function settleBox(slot: ChangeSlot, box: MockupRegionBox): MockupRegionBox {
-  let { x, y, w, h } = box;
-  if (slot === "headline" && y > 0.72) {
-    y = Math.min(0.42, 0.16 + h / 2);
+function settleRegions(regions: MockupRegions): MockupRegions {
+  const headline = regions.headline ? { ...regions.headline } : undefined;
+  const bullets = regions.bullets ? { ...regions.bullets } : undefined;
+  const cta = regions.cta ? { ...regions.cta } : undefined;
+  const gap = 0.028;
+  let cursor = 0.32;
+  if (headline && bottomPinned(headline)) {
+    headline.y = cursor + headline.h / 2;
+    cursor = headline.y + headline.h / 2 + gap;
+  } else if (headline) {
+    cursor = Math.max(cursor, headline.y + headline.h / 2 + gap);
   }
-  x = Math.max(w / 2, Math.min(1 - w / 2, x));
-  y = Math.max(h / 2, Math.min(1 - h / 2, y));
-  return { x, y, w, h };
+  if (bullets && bottomPinned(bullets)) {
+    bullets.y = cursor + bullets.h / 2;
+    cursor = bullets.y + bullets.h / 2;
+  }
+  if (cta && bottomPinned(cta)) {
+    const top = headline ? headline.y - headline.h / 2 : 0.32;
+    const bottom = bullets ? bullets.y + bullets.h / 2 : cursor;
+    cta.y = (top + bottom) / 2;
+  }
+  return {
+    ...(headline ? { headline: clampBox(headline) } : {}),
+    ...(bullets ? { bullets: clampBox(bullets) } : {}),
+    ...(cta ? { cta: clampBox(cta) } : {}),
+  };
 }
 
 function whyLine(issue: IssueDto): string {
@@ -119,13 +152,14 @@ export function buildChangeCallouts(
   }
 
   const fallback = pool[0] ?? ranked[0];
+  const seated = settleRegions(regions);
   const out: IssueDto[] = [];
   for (const slot of SLOT_ORDER) {
-    const raw = regions[slot];
+    const raw = seated[slot];
     if (!raw) continue;
     const issue = matched.get(slot) ?? fallback;
     if (!issue) continue;
-    out.push(pinFor(issue, slot, settleBox(slot, raw), mockupId));
+    out.push(pinFor(issue, slot, raw, mockupId));
   }
   return out;
 }

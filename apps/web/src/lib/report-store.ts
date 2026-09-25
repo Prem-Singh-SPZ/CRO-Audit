@@ -20,7 +20,6 @@ export interface StoreResult {
  */
 export function storeReport(data: ReportResponse): StoreResult {
   if (trySet(data)) return { ok: true, degraded: false };
-  // Retry without the heavy image payloads.
   if (trySet(slimForStorage(data))) return { ok: true, degraded: true };
   return { ok: false, degraded: false };
 }
