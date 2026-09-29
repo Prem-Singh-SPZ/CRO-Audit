@@ -13,6 +13,7 @@ import {
   dismissConsentInPage,
   emptySignals,
   finalizeIncompleteFlag,
+  formEmbedStillPendingInPage,
   hideConsentOverlaysInPage,
   isLiveCaptureUsable,
   layoutSnapshotsEqual,
@@ -690,6 +691,7 @@ async function captureScreenshotsOnce(
       console.warn("[screenshot] navigation issue (continuing):", err);
     }
 
+    await nudgeDelayedScripts(page);
     await waitUntilDocumentComplete(page);
     if (usesLocalChrome()) {
       await page
@@ -721,16 +723,13 @@ async function captureScreenshotsOnce(
         const upgrade = await openCaptureTab(browser, url, desktopUa, true);
         try {
           await upgrade.goto(url, { waitUntil: "domcontentloaded" });
+          await nudgeDelayedScripts(upgrade);
           const pack = await captureServerlessControl(upgrade);
           if (pack.control) {
             screenshots.length = 0;
             screenshots.push(pack.control);
             heroShot = pack.viewport ?? pack.control;
-            const fromJs = await raceTimeout(
-              upgrade.evaluate(readLeadFormInPage),
-              PAGE_OP_TIMEOUT_MS,
-              emptyLeadForm()
-            );
+            const fromJs = await readLeadFormDeep(upgrade);
             leadForm = preferLeadForm(leadForm, fromJs);
           }
         } finally {
@@ -900,8 +899,34 @@ async function captureScreenshotsOnce(
         }
       } else {
         try {
-          const gateReady = await prepareViewportForShot(page);
+          let gateReady = await prepareViewportForShot(page);
           if (gateReady.dismissedConsent) dismissedConsent = true;
+          // Vendor embeds (HubSpot v4, Marketo) intermittently never finish
+          // rendering: the iframe stays collapsed/hidden for minutes even
+          // though the page is otherwise complete. A fresh load succeeds
+          // most of the time, so retry the navigation once before shooting
+          // an empty form column.
+          if (pageStillOpen(page)) {
+            const pending = await raceTimeout(
+              page.evaluate(formEmbedStillPendingInPage),
+              PAGE_OP_TIMEOUT_MS,
+              null
+            );
+            if (pending) {
+              console.warn(
+                `[screenshot] form embed never rendered (${pending}); reloading once`
+              );
+              await page
+                .reload({ waitUntil: "domcontentloaded" })
+                .catch((err) =>
+                  console.warn("[screenshot] reload failed:", (err as Error)?.message ?? err)
+                );
+              await nudgeDelayedScripts(page);
+              await waitUntilDocumentComplete(page);
+              gateReady = await prepareViewportForShot(page);
+              if (gateReady.dismissedConsent) dismissedConsent = true;
+            }
+          }
           // #region agent log
           const formDbg1 = await raceTimeout(page.evaluate(readFormDebugInPage), PAGE_OP_TIMEOUT_MS, null);
           fetch('http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6b959f'},body:JSON.stringify({sessionId:'6b959f',runId:'pre-fix',hypothesisId:'F1',location:'screenshot.ts:beforeHeroShot',message:'form state at hero shot',data:{url,formDbg:formDbg1},timestamp:Date.now()})}).catch(()=>{});
@@ -950,11 +975,7 @@ async function captureScreenshotsOnce(
           stitchH,
           PAGE_OP_TIMEOUT_MS
         );
-        const measured = await raceTimeout(
-          page.evaluate(readLeadFormInPage),
-          PAGE_OP_TIMEOUT_MS,
-          emptyLeadForm()
-        );
+        const measured = await readLeadFormDeep(page);
         leadForm = preferLeadForm(leadForm, measured);
         // #region agent log
         const formDbg2 = await raceTimeout(page.evaluate(readFormDebugInPage), PAGE_OP_TIMEOUT_MS, null);
@@ -1081,11 +1102,7 @@ async function captureScreenshotsOnce(
             archive.shot.height,
             PAGE_OP_TIMEOUT_MS
           );
-          const measured = await raceTimeout(
-            page.evaluate(readLeadFormInPage),
-            PAGE_OP_TIMEOUT_MS,
-            emptyLeadForm()
-          );
+          const measured = await readLeadFormDeep(page);
           leadForm = preferLeadForm(leadForm, measured);
           console.log(
             `[screenshot] using archive snapshot ${hit.timestamp} for ${url}`
@@ -1159,6 +1176,74 @@ async function waitOutAutoChallenge(page: Page): Promise<void> {
     if (!isAutoClearingChallenge(reason)) return;
     await sleep(500);
   }
+}
+
+/**
+ * WP Rocket / Perfmatters / LiteSpeed "delay JavaScript execution" holds every
+ * deferred script (HubSpot, Marketo, chat, consent) until the first trusted
+ * user gesture — mousemove, wheel, keydown, touch. `window.scrollTo` fires none
+ * of those, so without this the form embed never loads and we shoot an empty
+ * form column. Two pointer moves from CDP are trusted events and release it.
+ */
+async function nudgeDelayedScripts(page: Page): Promise<void> {
+  if (!pageStillOpen(page)) return;
+  try {
+    await raceTimeout(
+      (async () => {
+        await page.mouse.move(120, 140);
+        await page.mouse.move(360, 300);
+      })(),
+      PAGE_OP_TIMEOUT_MS,
+      undefined
+    );
+  } catch (err) {
+    if (!isDeadPageError(err)) {
+      console.warn(
+        "[screenshot] interaction nudge failed:",
+        (err as Error)?.message ?? err
+      );
+    }
+  }
+}
+
+const VENDOR_FORM_FRAME_RE =
+  /hsforms|hubspot|marketo|pardot|typeform|calendly|chilipiper/i;
+
+/**
+ * Lead form read that follows vendor embeds into their frame. HubSpot v4,
+ * Marketo, Typeform… render the inputs inside a cross-origin iframe, so the
+ * main-document read only sees "an iframe" and returns no field names. That
+ * empty list is what let redesign mockups invent a different form per
+ * pattern. Chromium exposes those frames to Puppeteer, so run the same reader
+ * inside each vendor frame and keep the first one that lists fields.
+ */
+async function readLeadFormDeep(page: Page): Promise<LeadFormSignal> {
+  const top = await raceTimeout(
+    page.evaluate(readLeadFormInPage),
+    PAGE_OP_TIMEOUT_MS,
+    emptyLeadForm()
+  );
+  if (top.source !== "iframe" || !pageStillOpen(page)) return top;
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame() || frame.detached) continue;
+    if (!VENDOR_FORM_FRAME_RE.test(frame.url())) continue;
+    try {
+      const inner = await raceTimeout(
+        frame.evaluate(readLeadFormInPage),
+        PAGE_OP_TIMEOUT_MS,
+        emptyLeadForm()
+      );
+      if (inner.present && inner.fields.length > 0) return inner;
+    } catch (err) {
+      if (!isDeadPageError(err)) {
+        console.warn(
+          "[screenshot] vendor frame lead-form read failed:",
+          (err as Error)?.message ?? err
+        );
+      }
+    }
+  }
+  return top;
 }
 
 async function waitUntilDocumentComplete(page: Page): Promise<void> {

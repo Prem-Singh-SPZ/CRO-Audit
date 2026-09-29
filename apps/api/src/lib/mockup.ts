@@ -238,10 +238,13 @@ export async function generateFixMockup(
       const isHero = pattern.name === "Hero";
       const { regions, checks } = await inspectMockup(apiKey, mimeType, data);
 
+      // The inspector counts boxes only (text, select, textarea); radio
+      // questions and consent checkboxes in the brief must not inflate the
+      // expected count or every faithful render gets rejected.
       const expectedFields =
         isQualifyingLeadForm(input.leadForm) &&
         input.leadForm?.source === "fields"
-          ? input.leadForm.fields.length
+          ? (input.leadForm.boxFieldCount ?? input.leadForm.fields.length)
           : null;
       const { hard, soft } = mockupComplianceFailures(checks, expectedFields);
       if (

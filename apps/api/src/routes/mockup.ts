@@ -30,10 +30,17 @@ function parseLeadForm(raw: unknown): LeadFormSignal | undefined {
     typeof o.submitLabel === "string"
       ? o.submitLabel.replace(/\s+/g, " ").trim().slice(0, 80)
       : "";
+  const boxFieldCount =
+    typeof o.boxFieldCount === "number" &&
+    Number.isFinite(o.boxFieldCount) &&
+    o.boxFieldCount >= 0
+      ? Math.min(Math.round(o.boxFieldCount), fields.length)
+      : undefined;
   return {
     present: true,
     source: source ?? (fields.length > 0 ? "fields" : "iframe"),
     fields,
+    ...(boxFieldCount != null && fields.length > 0 ? { boxFieldCount } : {}),
     submitLabel: source === "iframe" || !submit ? null : submit,
   };
 }

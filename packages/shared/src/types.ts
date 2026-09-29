@@ -71,6 +71,12 @@ export interface LeadFormSignal {
   source: "fields" | "iframe" | null;
   /** Labels in DOM order. Empty when the fields live in an unreadable iframe. */
   fields: string[];
+  /**
+   * How many of `fields` are box-like inputs (text, email, select, textarea).
+   * Radio questions and checkboxes are listed in `fields` but excluded here;
+   * the render inspector only counts boxes, so compliance compares to this.
+   */
+  boxFieldCount?: number;
   submitLabel: string | null;
 }
 

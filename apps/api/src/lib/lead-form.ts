@@ -99,7 +99,67 @@ export function readLeadFormInPage(): LeadFormSignal {
     ].includes(type);
   };
 
+  const isRadio = (el: Element): boolean =>
+    el.tagName.toLowerCase() === "input" &&
+    (el.getAttribute("type") || "").toLowerCase() === "radio";
+
+  // A radio set is one question ("Are you a current customer?"), not one
+  // input per option. Label it from the fieldset legend / radiogroup label.
+  const radioGroupLabel = (el: Element): string | null => {
+    const legend = el.closest("fieldset")?.querySelector("legend");
+    if (legend?.textContent?.trim()) return clean(legend.textContent);
+    const group = el.closest("[role='radiogroup'], [role='group']");
+    if (group) {
+      const aria = group.getAttribute("aria-label");
+      if (aria && aria.trim()) return clean(aria);
+      const by = group.getAttribute("aria-labelledby");
+      if (by) {
+        const text = by
+          .split(/\s+/)
+          .map((id) => document.getElementById(id)?.textContent ?? "")
+          .join(" ");
+        if (text.trim()) return clean(text);
+      }
+    }
+    // HubSpot / Marketo put the question in a plain label above the options.
+    // Climb to the container that holds the whole radio set and take the
+    // last text-only label/heading that precedes the first option.
+    let node: Element | null = el.parentElement;
+    for (let i = 0; i < 5 && node; i++) {
+      const radios = node.querySelectorAll("input[type='radio']");
+      if (radios.length >= 2 && radios[0]) {
+        const first = radios[0];
+        const before = Array.from(
+          node.querySelectorAll("label, legend, p, span, div, h1, h2, h3, h4, h5, h6")
+        ).filter((c) => {
+          if (c.querySelector("input, select, textarea, button")) return false;
+          if (c.closest("label")?.querySelector("input")) return false;
+          const t = (c.textContent || "").replace(/\s+/g, " ").trim();
+          if (t.length < 3 || t.length > 120) return false;
+          return Boolean(
+            c.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING
+          );
+        });
+        const pick = before[before.length - 1];
+        if (pick?.textContent?.trim()) return clean(pick.textContent);
+      }
+      node = node.parentElement;
+    }
+    return null;
+  };
+
+  const isBoxControl = (el: Element): boolean => {
+    const tag = el.tagName.toLowerCase();
+    if (tag === "select" || tag === "textarea") return true;
+    const type = (el.getAttribute("type") || "text").toLowerCase();
+    return type !== "radio" && type !== "checkbox";
+  };
+
   const labelOf = (el: Element): string => {
+    if (isRadio(el)) {
+      const group = radioGroupLabel(el);
+      if (group) return group;
+    }
     const aria = el.getAttribute("aria-label");
     if (aria && aria.trim()) return clean(aria);
     const labelledBy = el.getAttribute("aria-labelledby");
@@ -129,10 +189,22 @@ export function readLeadFormInPage(): LeadFormSignal {
     return clean(type);
   };
 
-  const controlsOf = (root: ParentNode): Element[] =>
-    Array.from(root.querySelectorAll("input, textarea, select")).filter(
-      (el) => !isSkippable(el) && !looksLikeSearch(el)
+  const controlsOf = (root: ParentNode): Element[] => {
+    const seenRadioGroups = new Set<string>();
+    return Array.from(root.querySelectorAll("input, textarea, select")).filter(
+      (el) => {
+        if (isSkippable(el) || looksLikeSearch(el)) return false;
+        if (isRadio(el)) {
+          const key = el.getAttribute("name") || "";
+          if (key) {
+            if (seenRadioGroups.has(key)) return false;
+            seenRadioGroups.add(key);
+          }
+        }
+        return true;
+      }
     );
+  };
 
   const forms = Array.from(document.querySelectorAll("form"));
   let best: Element | null = null;
@@ -152,10 +224,9 @@ export function readLeadFormInPage(): LeadFormSignal {
   }
 
   if (best) {
-    const fields = controlsOf(best)
-      .map(labelOf)
-      .filter(Boolean)
-      .slice(0, 16);
+    const controls = controlsOf(best).slice(0, 16);
+    const fields = controls.map(labelOf).filter(Boolean);
+    const boxFieldCount = controls.filter(isBoxControl).length;
     const submit = best.querySelector(
       "button, input[type='submit'], [type='submit']"
     );
@@ -163,7 +234,13 @@ export function readLeadFormInPage(): LeadFormSignal {
       submit?.textContent || submit?.getAttribute("value") || "";
     const submitLabel = submitRaw.trim() ? clean(submitRaw) : null;
     if (fields.length > 0 || submitLabel) {
-      return { present: true, source: "fields", fields, submitLabel };
+      return {
+        present: true,
+        source: "fields",
+        fields,
+        boxFieldCount,
+        submitLabel,
+      };
     }
   }
 

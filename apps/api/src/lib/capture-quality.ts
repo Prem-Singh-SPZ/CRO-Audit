@@ -861,6 +861,33 @@ export function pageIsCaptureReady(): boolean {
   }
   if (overlayCoverage >= 0.35) return false;
 
+  // Vendor form embeds (HubSpot v4, Marketo, Typeform…) attach their iframe
+  // first and only size / unhide it once the form definition renders inside.
+  // A collapsed or hidden vendor frame in the fold is a form still loading.
+  for (const f of Array.from(document.querySelectorAll("iframe"))) {
+    const label = `${f.getAttribute("src") ?? ""} ${f.getAttribute("title") ?? ""}`;
+    if (!/hsforms|hubspot|marketo|pardot|typeform|calendly|chilipiper/i.test(label)) {
+      continue;
+    }
+    const st = getComputedStyle(f);
+    if (st.display === "none") continue;
+    const r = f.getBoundingClientRect();
+    if (r.width < 80) continue;
+    if (r.top > vh || r.bottom < 0) continue;
+    if (r.height < 40 || st.visibility === "hidden") return false;
+  }
+  // A HubSpot mount or Marketo form shell that the loader has not filled yet
+  // is a form still loading, even before any iframe exists.
+  for (const mount of Array.from(
+    document.querySelectorAll(".hs-form-frame, .hbspt-form, form[id^='mktoForm']")
+  )) {
+    if (mount.closest("footer, [role='contentinfo']")) continue;
+    if (getComputedStyle(mount).display === "none") continue;
+    const r = mount.getBoundingClientRect();
+    if (r.top > vh || r.width < 80) continue;
+    if (!mount.querySelector("iframe, input, select, textarea")) return false;
+  }
+
   const nearWhite = (color: string): boolean => {
     const m = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
     if (!m) return false;
@@ -1101,6 +1128,44 @@ export function hideKnownConsentSdkInPage(): number {
   return hidden;
 }
 
+/**
+ * A vendor form embed that started but never rendered: HubSpot / Marketo /
+ * Typeform iframe still collapsed or hidden, an empty HubSpot mount, or an
+ * empty Marketo `<form id="mktoForm_…">`. Returns a short reason, or null
+ * when no embed is pending. Self-contained for page.evaluate.
+ */
+export function formEmbedStillPendingInPage(): string | null {
+  const vendorRe = /hsforms|hubspot|marketo|pardot|typeform|calendly|chilipiper/i;
+  const inFooter = (el: Element) =>
+    Boolean(el.closest("footer, [role='contentinfo']"));
+  for (const f of Array.from(document.querySelectorAll("iframe"))) {
+    if (!vendorRe.test(`${f.getAttribute("src") ?? ""} ${f.getAttribute("title") ?? ""}`)) {
+      continue;
+    }
+    if (inFooter(f)) continue;
+    const st = getComputedStyle(f);
+    if (st.display === "none") continue;
+    const r = f.getBoundingClientRect();
+    if (r.width < 80) continue;
+    if (r.height < 40 || st.visibility === "hidden") {
+      return `vendor iframe ${Math.round(r.width)}x${Math.round(r.height)} ${st.visibility}`;
+    }
+  }
+  for (const mount of Array.from(
+    document.querySelectorAll(".hs-form-frame, .hbspt-form, [data-hs-forms-root]")
+  )) {
+    if (inFooter(mount)) continue;
+    if (getComputedStyle(mount).display === "none") continue;
+    if (!mount.querySelector("iframe, form, input")) return "empty HubSpot mount";
+  }
+  for (const form of Array.from(document.querySelectorAll("form[id^='mktoForm']"))) {
+    if (inFooter(form)) continue;
+    if (getComputedStyle(form).display === "none") continue;
+    if (form.childElementCount === 0) return "empty Marketo form";
+  }
+  return null;
+}
+
 /** A painted lead form is safer to keep than clicking Accept (page remount). */
 export function shouldSkipConsentClick(visibleLeadFields: number): boolean {
   return visibleLeadFields >= 1;
@@ -1283,6 +1348,19 @@ export function countVisibleLeadFields(): number {
     }
     const r = el.getBoundingClientRect();
     if (r.width >= 32 && r.height >= 14) n += 1;
+  }
+  // Cross-origin vendor form frames hide their inputs from this document.
+  // Count a painted (sized, visible) vendor frame as one field so form-page
+  // waits engage instead of the page reading as "no form".
+  for (const f of Array.from(document.querySelectorAll("iframe"))) {
+    const label = `${f.getAttribute("src") ?? ""} ${f.getAttribute("title") ?? ""}`;
+    if (!/hsforms|hubspot|marketo|pardot|typeform|calendly|chilipiper/i.test(label)) {
+      continue;
+    }
+    const st = getComputedStyle(f);
+    if (st.display === "none" || st.visibility === "hidden") continue;
+    const r = f.getBoundingClientRect();
+    if (r.width >= 80 && r.height >= 40) n += 1;
   }
   return n;
 }
