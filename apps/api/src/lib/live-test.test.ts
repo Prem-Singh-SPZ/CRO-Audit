@@ -23,33 +23,32 @@ describe("detectLiveTestFromHtml", () => {
     ).toBeNull();
   });
 
-  it("detects Optimizely from a global assignment", () => {
+  it("ignores other vendors' testing tools — only Spiralyze gates the audit", () => {
     expect(
       detectLiveTestFromHtml(
         `<html><script>window.optimizely = window.optimizely || [];</script></html>`
       )
-    ).toEqual({ vendor: "Optimizely" });
-  });
-
-  it("detects VWO from a class prefix, not body copy", () => {
+    ).toBeNull();
     expect(
       detectLiveTestFromHtml(
-        `<html><div class="vwo-preview-bar">QA</div></html>`
+        `<html><div class="vwo-preview-bar">QA</div><script src="https://dev.visualwebsiteoptimizer.com/j.php"></script></html>`
       )
-    ).toEqual({ vendor: "VWO" });
+    ).toBeNull();
+    expect(
+      detectLiveTestFromHtml(
+        `<html><script src="https://app.varify.io/v.js"></script></html>`
+      )
+    ).toBeNull();
+    expect(
+      detectLiveTestFromHtml(
+        `<html><script src="https://cdn-4.convertexperiments.com/v1/js/1.js"></script></html>`
+      )
+    ).toBeNull();
     expect(
       detectLiveTestFromHtml(
         `<html><p>We run A/B tests and multivariate experiments.</p></html>`
       )
     ).toBeNull();
-  });
-
-  it("detects Varify from its script host", () => {
-    expect(
-      detectLiveTestFromHtml(
-        `<html><script src="https://app.varify.io/v.js"></script></html>`
-      )
-    ).toEqual({ vendor: "Varify" });
   });
 
   it("treats varify-preview=original as the control, not a variation preview", () => {

@@ -61,6 +61,11 @@ export interface Screenshot {
 export interface RenderedSignals {
   textLength: number;
   h1Count: number;
+  /** Visible form controls (excluding hidden/submit). Sparse auth / signup
+   *  pages have little copy and no H1 but are clearly real once these exist. */
+  fieldCount: number;
+  /** Buttons and submit inputs. */
+  buttonCount: number;
 }
 
 /** Viewport-sized slice of the stitch, sent only to the vision model. */
@@ -340,6 +345,28 @@ async function openCaptureTab(
   });
   return page;
 }
+
+// #region agent log
+function readFormDebugInPage() {
+  const forms = Array.from(document.querySelectorAll("form")).map((f) => {
+    const r = f.getBoundingClientRect();
+    return {
+      inputs: f.querySelectorAll("input,select,textarea").length,
+      w: Math.round(r.width),
+      h: Math.round(r.height),
+      top: Math.round(r.top + window.scrollY),
+      visible: r.width > 10 && r.height > 10,
+    };
+  });
+  const iframes = Array.from(document.querySelectorAll("iframe")).map((f) => {
+    const r = f.getBoundingClientRect();
+    let host = "";
+    try { host = new URL(f.src).hostname; } catch { host = f.src.slice(0, 40); }
+    return { host, w: Math.round(r.width), h: Math.round(r.height), top: Math.round(r.top + window.scrollY) };
+  });
+  return { forms, iframes, docH: document.documentElement.scrollHeight };
+}
+// #endregion
 
 function fullPageTimeoutMs(): number {
   return usesLocalChrome() ? FULL_PAGE_TIMEOUT_MS : 10_000;
@@ -643,6 +670,15 @@ async function captureScreenshotsOnce(
       firstJs,
       brightDataWs != null
     );
+    // #region agent log
+    const netDbg: { failed: string[]; ok: string[] } = { failed: [], ok: [] };
+    const formVendorRe = /hsforms|hs-scripts|hsappstatic|hubspot|marketo|pardot|salesforce|typeform|jotform|formstack|activehosted|zoho/i;
+    page.on("requestfailed", (r) => { const u = r.url(); if (formVendorRe.test(u) && netDbg.failed.length < 15) netDbg.failed.push(`${u.slice(0, 120)} :: ${r.failure()?.errorText ?? "?"}`); });
+    page.on("requestfinished", (r) => { const u = r.url(); if (formVendorRe.test(u) && netDbg.ok.length < 15) netDbg.ok.push(u.slice(0, 120)); });
+    const jsErrors: string[] = [];
+    page.on("pageerror", (e) => { if (jsErrors.length < 10) jsErrors.push(String((e as Error)?.message ?? e).slice(0, 200)); });
+    page.on("console", (m) => { const t = m.type(); if ((t === "error" || t === "warn") && jsErrors.length < 10) jsErrors.push(`console.${t}: ${m.text().slice(0, 200)}`); });
+    // #endregion
 
     let status = 0;
     try {
@@ -780,6 +816,12 @@ async function captureScreenshotsOnce(
         page.evaluate(() => ({
           textLength: document.body?.innerText?.trim().length ?? 0,
           h1Count: document.querySelectorAll("h1").length,
+          fieldCount: document.querySelectorAll(
+            "input:not([type='hidden']):not([type='submit']):not([type='button']), select, textarea"
+          ).length,
+          buttonCount: document.querySelectorAll(
+            "button, input[type='submit'], [role='button']"
+          ).length,
         })),
         PAGE_OP_TIMEOUT_MS,
         null
@@ -860,6 +902,10 @@ async function captureScreenshotsOnce(
         try {
           const gateReady = await prepareViewportForShot(page);
           if (gateReady.dismissedConsent) dismissedConsent = true;
+          // #region agent log
+          const formDbg1 = await raceTimeout(page.evaluate(readFormDebugInPage), PAGE_OP_TIMEOUT_MS, null);
+          fetch('http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6b959f'},body:JSON.stringify({sessionId:'6b959f',runId:'pre-fix',hypothesisId:'F1',location:'screenshot.ts:beforeHeroShot',message:'form state at hero shot',data:{url,formDbg:formDbg1},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
           viewportShot = await captureViewportJpeg(page);
         } catch (err) {
           console.warn(
@@ -910,6 +956,47 @@ async function captureScreenshotsOnce(
           emptyLeadForm()
         );
         leadForm = preferLeadForm(leadForm, measured);
+        // #region agent log
+        const formDbg2 = await raceTimeout(page.evaluate(readFormDebugInPage), PAGE_OP_TIMEOUT_MS, null);
+        const scriptDbg = await raceTimeout(page.evaluate(() => {
+          const re = /hsforms|hs-scripts|hsappstatic|hubspot|marketo|pardot|salesforce|typeform|jotform|formstack|activehosted|zoho|forms/i;
+          const scripts = Array.from(document.querySelectorAll("script[src]")).map((s) => (s as HTMLScriptElement).src).filter((s) => re.test(s)).slice(0, 15).map((s) => s.slice(0, 120));
+          const placeholders = Array.from(document.querySelectorAll(".hbspt-form,.hs-form-frame,[data-form-id],[data-hs-forms-root],.marketo-form,[id^='mktoForm']")).map((el) => ({ cls: el.className?.toString().slice(0, 60), id: el.id?.slice(0, 40), childCount: el.childElementCount }));
+          const w = window as unknown as Record<string, unknown>;
+          const inline = Array.from(document.querySelectorAll("script:not([src])")).map((s) => s.textContent ?? "");
+          const createSnips: string[] = [];
+          for (const t of inline) {
+            let i = 0;
+            while (createSnips.length < 4) {
+              const at = t.indexOf("hbspt.forms.create", i);
+              if (at < 0) break;
+              createSnips.push(t.slice(at, at + 300).replace(/\s+/g, " "));
+              i = at + 1;
+            }
+          }
+          const targets = createSnips.map((s) => /target\s*:\s*["']([^"']+)["']/.exec(s)?.[1] ?? null);
+          const targetState = targets.map((sel) => { if (!sel) return null; try { const el = document.querySelector(sel); return el ? { found: true, childCount: el.childElementCount } : { found: false }; } catch { return { found: false }; } });
+          return { scripts, placeholders, hasHbspt: w.hbspt != null, createSnips, targets, targetState };
+        }), PAGE_OP_TIMEOUT_MS, null);
+        fetch('http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6b959f'},body:JSON.stringify({sessionId:'6b959f',runId:'pre-fix',hypothesisId:'F4',location:'screenshot.ts:afterFullPageWalk',message:'form state after full-page walk',data:{url,formDbg:formDbg2,leadForm:measured,scriptDbg,net:netDbg,jsErrors},timestamp:Date.now()})}).catch(()=>{});
+        const probe = await raceTimeout(page.evaluate(async () => {
+          const w = window as unknown as Record<string, any>;
+          const snip = Array.from(document.querySelectorAll("script:not([src])")).map((s) => s.textContent ?? "").find((t) => t.includes("hbspt.forms.create"));
+          const portalId = /portalId\s*:\s*["']?(\d+)/.exec(snip ?? "")?.[1];
+          const formId = /formId\s*:\s*["']([0-9a-f-]+)/.exec(snip ?? "")?.[1];
+          if (!w.hbspt?.forms?.create || !portalId || !formId) return { ran: false, portalId: portalId ?? null, formId: formId ?? null };
+          const div = document.createElement("div");
+          div.id = "__cro_probe";
+          document.body.appendChild(div);
+          try { w.hbspt.forms.create({ portalId, formId, target: "#__cro_probe" }); } catch (e) { return { ran: false, err: String(e).slice(0, 200) }; }
+          await new Promise((r) => setTimeout(r, 5000));
+          const iframe = div.querySelector("iframe");
+          const out = { ran: true, childCount: div.childElementCount, hasForm: div.querySelector("form") != null, iframeSrc: iframe?.src?.slice(0, 100) ?? null, iframeH: iframe?.clientHeight ?? null };
+          div.remove();
+          return out;
+        }), 12_000, null);
+        fetch('http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6b959f'},body:JSON.stringify({sessionId:'6b959f',runId:'pre-fix',hypothesisId:'F5',location:'screenshot.ts:hbsptProbe',message:'explicit hbspt.forms.create probe',data:{url,probe,net:netDbg,jsErrors},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
       }
 
       const signals = pageStillOpen(page)
@@ -1384,22 +1471,17 @@ async function shootControlJpeg(
   page: Page
 ): Promise<{ shot: Screenshot | null; method: string }> {
   if (!pageStillOpen(page)) return { shot: null, method: "none" };
-  // Cloud Run: CDP first. Clip resizes the viewport and OOMs the container.
-  if (!usesLocalChrome()) {
-    let shot = await captureNativeFullPageJpeg(page);
-    if (shot) return { shot, method: "cdp" };
-    shot = await capturePuppeteerFullPageJpeg(page);
-    if (shot) return { shot, method: "fullPage" };
-    shot = await captureClippedDocumentJpeg(page);
-    if (shot) return { shot, method: "clip" };
-    return { shot: null, method: "none" };
-  }
-  let shot = await captureClippedDocumentJpeg(page);
-  if (shot) return { shot, method: "clip" };
-  shot = await captureNativeFullPageJpeg(page);
+  // CDP captureBeyondViewport keeps the 1440x900 viewport, so `100vh`
+  // sections stay one screen tall. The clip method grows the viewport to the
+  // document height, which stretches every vh-sized hero to the full page and
+  // pushes the rest of the content out of the clipped box (blank "after the
+  // hero" captures). Clip is the last resort only. On Cloud Run it also OOMs.
+  let shot = await captureNativeFullPageJpeg(page);
   if (shot) return { shot, method: "cdp" };
   shot = await capturePuppeteerFullPageJpeg(page);
   if (shot) return { shot, method: "fullPage" };
+  shot = await captureClippedDocumentJpeg(page);
+  if (shot) return { shot, method: "clip" };
   return { shot: null, method: "none" };
 }
 
@@ -1498,8 +1580,11 @@ async function captureControlFullPage(
     );
     const fieldCount = await waitUntilLeadFieldsStable(page);
     await waitUntilDocumentPainted(page);
-    // Extra remount walk is local-only. Cloud Run Chromium dies on long walks.
-    if (fieldCount > 0 && usesLocalChrome()) {
+    // Scroll the real viewport through the page so IntersectionObserver-driven
+    // reveal effects (Framer appear, Webflow IX, AOS) fire for every section;
+    // a single jump to the bottom leaves mid-page blocks at opacity 0. Also
+    // remounts lazy forms. Local-only: Cloud Run Chromium dies on long walks.
+    if (usesLocalChrome()) {
       await walkUntilPageSettled(page);
       await waitUntilDocumentPainted(page);
     }

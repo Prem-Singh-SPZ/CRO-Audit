@@ -15,6 +15,11 @@ export interface LiveTestSignals {
   scriptBodies: string;
 }
 
+// The live-test gate only cares about Spiralyze — our own experiments. A page
+// mid-flight in one of our tests already has a conversion-tested treatment, so
+// auditing it as a broken control would be wrong. Other vendors' tests
+// (VWO, Optimizely, Convert, …) are someone else's experiment and the audit
+// proceeds normally.
 const VENDORS: {
   vendor: string;
   script: RegExp;
@@ -26,54 +31,6 @@ const VENDORS: {
     script: /spiralyze/i,
     global: /\b(?:Spiralyze|__SPZ__)\b|\bwindow\.spz\b/,
     classId: /\bspz[-_]\d/,
-  },
-  {
-    vendor: "Optimizely",
-    script: /optimizely/i,
-    global: /\boptimizely\b/,
-    classId: /(?:^|[\s"'#.])optimizely/i,
-  },
-  {
-    vendor: "VWO",
-    script: /visualwebsiteoptimizer|dev\.visualwebsiteoptimizer|\bvwo\.com\b/i,
-    global: /\b(?:_vwo_code|VWO)\b/,
-    classId: /\bvwo[-_]/i,
-  },
-  {
-    vendor: "Convert",
-    script: /convertexperiments|cdn-3\.convert\.com|convert\.com\/js/i,
-    global: /\b_conv_q\b/,
-    classId: /\bconvert[-_]/i,
-  },
-  {
-    vendor: "AB Tasty",
-    script: /abtasty/i,
-    global: /\bABTasty\b/,
-    classId: /\babtasty[-_]/i,
-  },
-  {
-    vendor: "Adobe Target",
-    script: /mbox\.js|tt\.omtrdc\.net|adobe\.com\/target/i,
-    global: /\badobe\.target\b/,
-    classId: /\bat-element-marker\b/,
-  },
-  {
-    vendor: "Mutiny",
-    script: /mutinyhq|client\.mutiny/i,
-    global: /\bmutiny\b/,
-    classId: /\bmutiny[-_]/i,
-  },
-  {
-    vendor: "Kameleoon",
-    script: /kameleoon/i,
-    global: /\bkameleoon\b/,
-    classId: /\bkameleoon[-_]/i,
-  },
-  {
-    vendor: "Varify",
-    script: /varify\.io/i,
-    global: /\bvarify\b/,
-    classId: /\bvarify[-_]/i,
   },
 ];
 
@@ -195,6 +152,8 @@ export function inspectAndHideLiveTestInPage(): LiveTestInspectResult {
     .join("\n");
 
   const urlBlob = [...scriptSrcs, ...iframeSrcs].join(" ");
+  // Spiralyze only — a page running one of our own experiments already has a
+  // conversion-tested treatment. Other vendors' tools never gate the audit.
   const vendors: { vendor: string; script: RegExp; global: RegExp; classId: RegExp }[] =
     [
       {
@@ -203,65 +162,10 @@ export function inspectAndHideLiveTestInPage(): LiveTestInspectResult {
         global: /\b(?:Spiralyze|__SPZ__)\b|\bwindow\.spz\b/,
         classId: /\bspz[-_]\d/,
       },
-      {
-        vendor: "Optimizely",
-        script: /optimizely/i,
-        global: /\boptimizely\b/,
-        classId: /(?:^|[\s"'#.])optimizely/i,
-      },
-      {
-        vendor: "VWO",
-        script: /visualwebsiteoptimizer|dev\.visualwebsiteoptimizer|\bvwo\.com\b/i,
-        global: /\b(?:_vwo_code|VWO)\b/,
-        classId: /\bvwo[-_]/i,
-      },
-      {
-        vendor: "Convert",
-        script: /convertexperiments|cdn-3\.convert\.com|convert\.com\/js/i,
-        global: /\b_conv_q\b/,
-        classId: /\bconvert[-_]/i,
-      },
-      {
-        vendor: "AB Tasty",
-        script: /abtasty/i,
-        global: /\bABTasty\b/,
-        classId: /\babtasty[-_]/i,
-      },
-      {
-        vendor: "Adobe Target",
-        script: /mbox\.js|tt\.omtrdc\.net|adobe\.com\/target/i,
-        global: /\badobe\.target\b/,
-        classId: /\bat-element-marker\b/,
-      },
-      {
-        vendor: "Mutiny",
-        script: /mutinyhq|client\.mutiny/i,
-        global: /\bmutiny\b/,
-        classId: /\bmutiny[-_]/i,
-      },
-      {
-        vendor: "Kameleoon",
-        script: /kameleoon/i,
-        global: /\bkameleoon\b/,
-        classId: /\bkameleoon[-_]/i,
-      },
-      {
-        vendor: "Varify",
-        script: /varify\.io/i,
-        global: /\bvarify\b/,
-        classId: /\bvarify[-_]/i,
-      },
     ];
 
   const globalKeys: Record<string, string[]> = {
     Spiralyze: ["spz", "Spiralyze", "__SPZ__"],
-    Optimizely: ["optimizely"],
-    VWO: ["_vwo_code", "VWO"],
-    Convert: ["_conv_q"],
-    "AB Tasty": ["ABTasty"],
-    Mutiny: ["mutiny"],
-    Kameleoon: ["kameleoon"],
-    Varify: ["varify"],
   };
 
   const found: string[] = [];
@@ -284,30 +188,6 @@ export function inspectAndHideLiveTestInPage(): LiveTestInspectResult {
     }
   }
 
-  // VWO's SmartCode sits on every page, and many sites run it only for
-  // heatmaps, recordings, and insights. Count VWO only when its campaign
-  // list has a running experiment. No campaign list → keep the snippet
-  // signal (cannot tell).
-  if (found.includes("VWO")) {
-    const exp = (window as unknown as Record<string, unknown>)._vwo_exp;
-    if (exp && typeof exp === "object") {
-      const analyticsOnly = /^(ANALYZE_|INSIGHTS_|SURVEY|FEEDBACK|FUNNEL|FORM_ANALYSIS)/i;
-      const runsExperiment = Object.values(exp as Record<string, unknown>).some(
-        (c) => {
-          if (!c || typeof c !== "object") return false;
-          const rec = c as Record<string, unknown>;
-          const type = String(rec.type ?? "");
-          const status = String(rec.status ?? "");
-          return (
-            status.toUpperCase() === "RUNNING" &&
-            type !== "" &&
-            !analyticsOnly.test(type)
-          );
-        }
-      );
-      if (!runsExperiment) found.splice(found.indexOf("VWO"), 1);
-    }
-  }
   const vendor = found[0] ?? null;
 
   const hideSelectors = [

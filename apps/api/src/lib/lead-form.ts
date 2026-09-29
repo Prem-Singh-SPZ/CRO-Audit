@@ -5,13 +5,65 @@ export function emptyLeadForm(): LeadFormSignal {
 }
 
 /**
+ * Minimum visible inputs for a `<form>` to count as a lead form. Anything
+ * smaller (newsletter email box, footer signup, coupon field) is page
+ * furniture, not the conversion goal — the page is then treated as a
+ * landing / pricing / marketing page and gets the hero pattern instead.
+ *
+ * Keep in sync with the literal inside `readLeadFormInPage` (that function is
+ * serialized into the browser and cannot reference module constants).
+ */
+export const MIN_LEAD_FORM_FIELDS = 3;
+
+/**
+ * True when the measured signal is a form worth redesigning: a readable form
+ * with at least MIN_LEAD_FORM_FIELDS inputs, or a known form-vendor iframe
+ * (HubSpot, Marketo, …) whose fields we cannot count from outside.
+ */
+export function isQualifyingLeadForm(
+  leadForm?: LeadFormSignal | null
+): boolean {
+  if (!leadForm?.present) return false;
+  if (leadForm.source === "iframe") return true;
+  return leadForm.fields.length >= MIN_LEAD_FORM_FIELDS;
+}
+
+/**
  * Reads the lead form from the rendered document, including fields that are
  * covered or not painted. Self-contained so Puppeteer can run it in the page.
  * Returns only labels that exist on the controls — never a guessed field list.
+ *
+ * Ignores footer / newsletter forms and any form with fewer than three inputs,
+ * so a pricing page with a "Subscribe" email box is not treated as form-first.
  */
 export function readLeadFormInPage(): LeadFormSignal {
+  // Mirrors MIN_LEAD_FORM_FIELDS; this function runs inside the page.
+  const MIN_FIELDS = 3;
+
   const clean = (raw: string): string =>
     raw.replace(/\s+/g, " ").trim().slice(0, 80);
+
+  const inFooter = (el: Element): boolean =>
+    Boolean(el.closest("footer, [role='contentinfo']"));
+
+  // Newsletter / subscribe widgets are not lead-gen forms even when they sit
+  // above the footer. Look at the form's own attributes plus its visible text.
+  const looksLikeNewsletter = (form: Element): boolean => {
+    const attrs = [
+      form.getAttribute("id"),
+      form.getAttribute("name"),
+      form.getAttribute("class"),
+      form.getAttribute("action"),
+      form.getAttribute("aria-label"),
+      form.getAttribute("data-form-type"),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    const text = (form.textContent || "").replace(/\s+/g, " ").toLowerCase();
+    const re = /newsletter|subscribe|subscription|stay (up to date|in the loop|informed)|get (the latest|updates)|join our (list|mailing)/;
+    return re.test(attrs) || re.test(text.slice(0, 400));
+  };
 
   const blobOf = (el: Element): string =>
     [
@@ -87,9 +139,12 @@ export function readLeadFormInPage(): LeadFormSignal {
   let bestCount = 0;
   for (const form of forms) {
     const controls = controlsOf(form);
-    if (controls.length === 0) continue;
-    const inChrome = Boolean(form.closest("header, nav, [role='search']"));
-    if (inChrome && controls.length === 1 && looksLikeSearch(controls[0])) continue;
+    // A lead form has several inputs. One or two boxes is a newsletter,
+    // login, coupon, or search widget — never the page's conversion goal.
+    if (controls.length < MIN_FIELDS) continue;
+    if (form.closest("nav, [role='search']")) continue;
+    if (inFooter(form)) continue;
+    if (looksLikeNewsletter(form)) continue;
     if (controls.length > bestCount) {
       best = form;
       bestCount = controls.length;
@@ -117,6 +172,8 @@ export function readLeadFormInPage(): LeadFormSignal {
     if (!/hsforms|hubspot|marketo|pardot|typeform|calendly|chilipiper|\bform\b/i.test(label)) {
       return false;
     }
+    // A footer-embedded signup widget is not the page's conversion goal.
+    if (inFooter(frame)) return false;
     const r = frame.getBoundingClientRect();
     return r.width >= 80 && r.height >= 40;
   });

@@ -18,6 +18,7 @@ import {
   LANDMARK_IDS,
 } from "@cro/shared";
 import { analyzeMock, collectHeuristicCandidates } from "./mock-ai";
+import { MIN_LEAD_FORM_FIELDS } from "./lead-form";
 import { sanitizeUntrustedText } from "./sanitize";
 import { logEvent, logWarn } from "./logger";
 import { applyLandmarkPins } from "./landmarks";
@@ -506,7 +507,9 @@ function heuristicCandidatesText(ctx: PageContext): string {
 }
 
 function fewShotPatternsText(ctx: PageContext): string {
-  const formFirst = ctx.forms.length > 0;
+  // Only a real lead form (3+ inputs) makes the page form-first. A newsletter
+  // or footer email box should not pull form-layout patterns into the report.
+  const formFirst = ctx.forms.some((f) => f.fieldCount >= MIN_LEAD_FORM_FIELDS);
   if (formFirst) {
     const picks = FORM_FIX_PATTERNS.slice(0, 2);
     const lines = picks.map((p) => {

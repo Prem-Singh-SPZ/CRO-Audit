@@ -136,10 +136,17 @@ analyze.post("/", async (c) => {
     const screenshots = screenshotResult.screenshots;
     const heroShot = screenshotResult.heroShot;
 
+    // The static crawl sees an empty SPA shell; the rendered DOM tells us if a
+    // real page exists behind it. Long copy or an H1 is enough. So is a sparse
+    // page with an actual form or CTA (auth / signup screens have ~200-300
+    // chars and no H1, but are conversion pages we must audit, not walls).
+    const rendered = screenshotResult.rendered;
     const renderedRich =
-      !!screenshotResult.rendered &&
-      (screenshotResult.rendered.textLength > 400 ||
-        screenshotResult.rendered.h1Count > 0);
+      !!rendered &&
+      (rendered.textLength > 400 ||
+        rendered.h1Count > 0 ||
+        (rendered.textLength >= 80 &&
+          ((rendered.fieldCount ?? 0) > 0 || (rendered.buttonCount ?? 0) > 0)));
 
     if (
       pageContext.blocked &&

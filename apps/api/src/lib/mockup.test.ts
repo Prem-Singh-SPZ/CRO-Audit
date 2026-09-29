@@ -60,11 +60,70 @@ describe("isFormFirstPage", () => {
         {
           present: true,
           source: "fields",
-          fields: ["Business email"],
+          fields: ["First name", "Business email", "Company"],
           submitLabel: "Get a demo",
         }
       )
     ).toBe(true);
+  });
+
+  it("treats a form-vendor iframe as form-first even without readable fields", () => {
+    expect(
+      isFormFirstPage([], {
+        present: true,
+        source: "iframe",
+        fields: [],
+        submitLabel: null,
+      })
+    ).toBe(true);
+  });
+
+  it("ignores a one-field newsletter box (pricing page is not form-first)", () => {
+    expect(
+      isFormFirstPage(
+        [
+          {
+            severity: "MEDIUM",
+            category: "Pricing",
+            title: "Plan comparison is hard to scan",
+            description: "Three tiers with mismatched feature rows.",
+          },
+        ],
+        {
+          present: true,
+          source: "fields",
+          fields: ["Email"],
+          submitLabel: "Subscribe",
+        }
+      )
+    ).toBe(false);
+  });
+
+  it("ignores a two-field form as well (needs more than two inputs)", () => {
+    expect(
+      isFormFirstPage([], {
+        present: true,
+        source: "fields",
+        fields: ["Email", "Country"],
+        submitLabel: "Subscribe",
+      })
+    ).toBe(false);
+  });
+
+  it("trusts a measured no-form result over sign-up wording in the findings", () => {
+    expect(
+      isFormFirstPage(
+        [
+          {
+            severity: "HIGH",
+            category: "CTA",
+            title: "Sign up CTA is below the fold",
+            description: "Primary plan CTA appears after the comparison table.",
+          },
+        ],
+        { present: false, source: null, fields: [], submitLabel: null }
+      )
+    ).toBe(false);
   });
 
   it("does not flag a marketing-hero-only brief", () => {
@@ -84,12 +143,24 @@ describe("isFormFirstPage", () => {
     const brief = leadFormBrief({
       present: true,
       source: "fields",
-      fields: ["Business email"],
+      fields: ["First name", "Business email", "Company"],
       submitLabel: "Get a demo",
     });
-    expect(brief).toContain("1. Business email");
-    expect(brief).not.toMatch(/\n2\./);
+    expect(brief).toContain("1. First name");
+    expect(brief).toContain("2. Business email");
+    expect(brief).toContain("3. Company");
+    expect(brief).not.toMatch(/\n4\./);
     expect(brief).toContain('The only button on the form is "Get a demo"');
+  });
+
+  it("emits no form brief for a newsletter box, so the hero mockup is not forced to draw it", () => {
+    const brief = leadFormBrief({
+      present: true,
+      source: "fields",
+      fields: ["Email"],
+      submitLabel: "Subscribe",
+    });
+    expect(brief).toBe("");
   });
 
   it("does not name fields when only an iframe was found", () => {

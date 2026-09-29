@@ -1,3 +1,4 @@
+import { isQualifyingLeadForm } from "./lead-form";
 import { sanitizeUntrustedText } from "./sanitize";
 import {
   FORM_FIX_PATTERNS,
@@ -92,7 +93,7 @@ function patternsFor(input: MockupInput): Array<
   if (!isFormFirst(input.issues, input.leadForm)) return [HERO_PATTERN];
   // A measured form has a closed field list. Skip briefs that ask for extra
   // inputs (6–10 fields, sample name/email/company/phone, or a padded step).
-  const closedList = input.leadForm?.present === true;
+  const closedList = isQualifyingLeadForm(input.leadForm);
   if (!closedList) {
     return pickRotatingFormPatterns(
       input.rotateSeed || `${input.host}:${Date.now()}`,
@@ -238,7 +239,8 @@ export async function generateFixMockup(
       const { regions, checks } = await inspectMockup(apiKey, mimeType, data);
 
       const expectedFields =
-        input.leadForm?.present === true && input.leadForm.source === "fields"
+        isQualifyingLeadForm(input.leadForm) &&
+        input.leadForm?.source === "fields"
           ? input.leadForm.fields.length
           : null;
       const { hard, soft } = mockupComplianceFailures(checks, expectedFields);
@@ -352,14 +354,19 @@ function isFormFirst(
   issues: MockupIssueBrief[],
   leadForm?: LeadFormSignal | null
 ): boolean {
-  if (leadForm?.present) return true;
+  if (isQualifyingLeadForm(leadForm)) return true;
+  // The DOM was measured and no real lead form was found (at most a
+  // newsletter / footer box). Trust that over issue wording — pricing and
+  // landing pages routinely have "Sign up" / "Demo" CTAs in their findings.
+  if (leadForm) return false;
+  // No measurement at all (older client payloads): fall back to the findings.
   const re = /form|modal|sign[\s-]?up|log[\s-]?in|sign[\s-]?in|demo|waitlist|checkout|lead[\s-]?capture/i;
   return issues.some((i) => re.test(i.title) || re.test(i.category));
 }
 
 /** Closed field list for the image model. Labels are only those read from the DOM. */
 export function leadFormBrief(leadForm?: LeadFormSignal | null): string {
-  if (!leadForm?.present) return "";
+  if (!isQualifyingLeadForm(leadForm) || !leadForm) return "";
   if (leadForm.source !== "fields" || leadForm.fields.length === 0) {
     return `MEASURED FORM:
 - A lead form is on this page, but its fields could not be read (often an iframe under a covering layer).
