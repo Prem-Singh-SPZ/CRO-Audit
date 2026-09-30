@@ -43,6 +43,33 @@ export function isDeadPageError(err: unknown): boolean {
   );
 }
 
+/** http(s) urls inside a CSS background-image. Gradients are ignored. */
+export function cssBackgroundUrls(value: string): string[] {
+  if (!value || value === "none") return [];
+  const urls: string[] = [];
+  const re = /url\(\s*(['"]?)(https?:\/\/[^'")\s]+)\1\s*\)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(value))) {
+    const url = match[2];
+    if (url && !urls.includes(url)) urls.push(url);
+  }
+  return urls;
+}
+
+/**
+ * A gradient paints on its own. An http(s) background counts only after
+ * preload marked the element `data-cro-bg-ready="1"`.
+ * Keep in sync with the inline check in the viewport blank probes.
+ */
+export function cssBackgroundCountsAsPainted(
+  backgroundImage: string,
+  readyMark: string | null
+): boolean {
+  if (!backgroundImage || backgroundImage === "none") return false;
+  if (cssBackgroundUrls(backgroundImage).length === 0) return true;
+  return readyMark === "1";
+}
+
 /** Retry only when the first pass produced no desktop shot and was not a hard wall. */
 export function shouldRetryCapture(shot: {
   screenshots: { device: string }[];
@@ -224,7 +251,15 @@ export function isViewportVisuallyBlank(): boolean {
       ) {
         return true;
       }
-      if (st.backgroundImage && st.backgroundImage !== "none") return true;
+      // http(s) backgrounds count only after preloadPaintedMediaInPage.
+      // Gradient-only backgrounds paint without a network image.
+      const bg = st.backgroundImage;
+      if (bg && bg !== "none") {
+        const httpBg = /url\(\s*['"]?https?:\/\//i.test(bg);
+        if (!httpBg || node.getAttribute("data-cro-bg-ready") === "1") {
+          return true;
+        }
+      }
       node = node.parentElement;
     }
     return false;
@@ -926,7 +961,15 @@ export function pageIsCaptureReady(): boolean {
       ) {
         return true;
       }
-      if (st.backgroundImage && st.backgroundImage !== "none") return true;
+      // http(s) backgrounds count only after preloadPaintedMediaInPage.
+      // Gradient-only backgrounds paint without a network image.
+      const bg = st.backgroundImage;
+      if (bg && bg !== "none") {
+        const httpBg = /url\(\s*['"]?https?:\/\//i.test(bg);
+        if (!httpBg || node.getAttribute("data-cro-bg-ready") === "1") {
+          return true;
+        }
+      }
       node = node.parentElement;
     }
     return false;
@@ -1259,6 +1302,128 @@ export function pageLeadFieldsHaveAuthorCss(): boolean {
     }
     return true;
   });
+}
+
+/**
+ * Decode large CSS backgrounds and video frames, and turn off
+ * content-visibility:auto, before a full-page JPEG. Self-contained for
+ * page.evaluate. Marks `data-cro-bg-ready` only after an http(s) background
+ * actually decodes — the blank probes read that mark.
+ */
+export function preloadPaintedMediaInPage(): Promise<{
+  backgrounds: number;
+  videos: number;
+  revealed: number;
+}> {
+  const httpBg = /url\(\s*(['"]?)(https?:\/\/[^'")\s]+)\1\s*\)/gi;
+  const urlsOf = (value: string): string[] => {
+    if (!value || value === "none") return [];
+    const urls: string[] = [];
+    httpBg.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = httpBg.exec(value))) {
+      const url = match[2];
+      if (url && !urls.includes(url)) urls.push(url);
+    }
+    return urls;
+  };
+  const decodeUrl = (url: string): Promise<boolean> =>
+    new Promise((resolve) => {
+      const img = new Image();
+      const timer = window.setTimeout(() => resolve(false), 4000);
+      const finish = (ok: boolean) => {
+        window.clearTimeout(timer);
+        resolve(ok);
+      };
+      img.onload = () => {
+        img
+          .decode()
+          .then(() => finish(true))
+          .catch(() => finish(img.naturalWidth > 0));
+      };
+      img.onerror = () => finish(false);
+      img.src = url;
+    });
+  const primeVideo = (video: HTMLVideoElement): Promise<void> => {
+    if (video.readyState >= 2) return Promise.resolve();
+    video.muted = true;
+    video.preload = "auto";
+    video.playsInline = true;
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        video.removeEventListener("seeked", finish);
+        video.removeEventListener("loadeddata", finish);
+        resolve();
+      };
+      video.addEventListener("seeked", finish);
+      video.addEventListener("loadeddata", finish);
+      window.setTimeout(finish, 2500);
+      const seek = () => {
+        const dur = Number.isFinite(video.duration) ? video.duration : 0;
+        const t = dur > 0.2 ? Math.min(0.1, dur / 2) : 0.1;
+        try {
+          video.currentTime = t;
+        } catch {
+          finish();
+        }
+      };
+      if (video.readyState >= 1) seek();
+      else video.addEventListener("loadedmetadata", seek, { once: true });
+    });
+  };
+
+  const nodes = Array.from(
+    document.querySelectorAll(
+      "div, section, article, main, header, footer, aside, figure, picture, ul, li"
+    )
+  ).slice(0, 2000);
+  let revealed = 0;
+  for (const el of nodes) {
+    if (!(el instanceof HTMLElement)) continue;
+    if (getComputedStyle(el).contentVisibility === "auto") {
+      el.style.setProperty("content-visibility", "visible", "important");
+      revealed += 1;
+    }
+  }
+
+  const jobs: Promise<void>[] = [];
+  let backgrounds = 0;
+  const seen = new Set<string>();
+  for (const el of nodes) {
+    if (!(el instanceof HTMLElement)) continue;
+    if (backgrounds >= 30) break;
+    const box = el.getBoundingClientRect();
+    if (box.height < 200 || box.width < 80) continue;
+    const urls = urlsOf(getComputedStyle(el).backgroundImage);
+    if (urls.length === 0) continue;
+    if (urls.some((url) => !seen.has(url) && backgrounds >= 30)) continue;
+    for (const url of urls) {
+      if (seen.has(url)) continue;
+      seen.add(url);
+      backgrounds += 1;
+    }
+    jobs.push(
+      Promise.all(urls.map((url) => decodeUrl(url))).then((oks) => {
+        if (oks.every(Boolean)) el.setAttribute("data-cro-bg-ready", "1");
+      })
+    );
+  }
+
+  let videos = 0;
+  for (const video of Array.from(document.querySelectorAll("video"))) {
+    if (videos >= 8) break;
+    if (!(video instanceof HTMLVideoElement)) continue;
+    if (video.readyState >= 2) continue;
+    const box = video.getBoundingClientRect();
+    if (box.height < 200 || box.width < 200) continue;
+    videos += 1;
+    jobs.push(primeVideo(video));
+  }
+
+  return Promise.all(jobs).then(() => ({ backgrounds, videos, revealed }));
 }
 
 /**

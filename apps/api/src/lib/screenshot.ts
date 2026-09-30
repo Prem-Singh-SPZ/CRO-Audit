@@ -25,9 +25,11 @@ import {
   imagesTooIncomplete,
   inlineZeroNaturalSvgImages,
   isDeadPageError,
+  isViewportVisuallyBlank,
   leadFieldWaitDecision,
   pageFontsReady,
   pageIsCaptureReady,
+  preloadPaintedMediaInPage,
   pageLeadFieldsHaveAuthorCss,
   shouldRetryCapture,
   shouldSkipConsentClick,
@@ -131,6 +133,8 @@ const NAV_TIMEOUT_MS = 18_000;
 // a hang (only a rejection). We therefore race every page op against a timeout
 // so a stuck page degrades to "no screenshot" instead of hanging the request.
 const PAGE_OP_TIMEOUT_MS = 6_000;
+/** CSS backgrounds and video frames can outlast a normal page op. */
+const MEDIA_PRELOAD_TIMEOUT_MS = 12_000;
 const SCREENSHOT_TIMEOUT_MS = 30_000;
 /** Chrome native full-page JPEG can be tall; give CDP more room than a fold shot. */
 const FULL_PAGE_TIMEOUT_MS = 60_000;
@@ -636,6 +640,7 @@ async function captureScreenshotsOnce(
   let dismissedConsent = false;
   let liveTest: { vendor: string } | null = null;
   let liveUsable = false;
+  let controlHeroBlank = false;
   let screenshotSource: "live" | "archive" = "live";
   let archiveCapturedAt: string | null = null;
   let leadForm: LeadFormSignal = emptyLeadForm();
@@ -729,6 +734,7 @@ async function captureScreenshotsOnce(
             screenshots.length = 0;
             screenshots.push(pack.control);
             heroShot = pack.viewport ?? pack.control;
+            controlHeroBlank = pack.blank;
             const fromJs = await readLeadFormDeep(upgrade);
             leadForm = preferLeadForm(leadForm, fromJs);
           }
@@ -867,10 +873,18 @@ async function captureScreenshotsOnce(
         undefined
       );
       let viewportShot: Screenshot | null = screenshots[0] ?? null;
-      let control = { shot: null as Screenshot | null, ready: false };
+      let control = {
+        shot: null as Screenshot | null,
+        ready: false,
+        blank: false,
+      };
       if (!usesLocalChrome()) {
         if (screenshots.length > 0) {
-          control = { shot: screenshots[0] ?? null, ready: true };
+          control = {
+            shot: screenshots[0] ?? null,
+            ready: !controlHeroBlank,
+            blank: controlHeroBlank,
+          };
         } else {
           try {
             const pack = await captureServerlessControl(page);
@@ -880,7 +894,11 @@ async function captureScreenshotsOnce(
             if (pack.control) {
               screenshots.length = 0;
               screenshots.push(pack.control);
-              control = { shot: pack.control, ready: true };
+              control = {
+                shot: pack.control,
+                ready: !pack.blank,
+                blank: pack.blank,
+              };
             }
           } catch (err) {
             console.warn(
@@ -889,7 +907,7 @@ async function captureScreenshotsOnce(
             );
           }
           if (!control.shot && screenshots.length > 0) {
-            control = { shot: screenshots[0] ?? null, ready: true };
+            control = { shot: screenshots[0] ?? null, ready: true, blank: false };
           }
         }
         // HTML after the JPEG so a giant DOM serialize cannot empty the capture.
@@ -1043,7 +1061,7 @@ async function captureScreenshotsOnce(
       const hasCollapsedIframe = signals.formIframes.some(
         (f) => f.width >= 80 && f.height < 40
       );
-      if (screenshots.length > 0) {
+      if (screenshots.length > 0 && !control.blank) {
         control.ready = true;
         liveUsable = true;
       }
@@ -1051,6 +1069,11 @@ async function captureScreenshotsOnce(
         incompleteCapture = true;
         captureNote =
           "The viewport had not finished loading (form, images, or spinner) when we captured the page.";
+        liveUsable = false;
+      } else if (control.blank) {
+        incompleteCapture = true;
+        captureNote =
+          "The hero image had not finished painting when we captured the page.";
         liveUsable = false;
       } else {
         const finalized = finalizeIncompleteFlag({
@@ -1374,6 +1397,11 @@ async function waitUntilDocumentPainted(page: Page): Promise<void> {
     PAGE_OP_TIMEOUT_MS,
     { promoted: 0, decoded: 0, total: 0 }
   );
+  await raceTimeout(
+    page.evaluate(preloadPaintedMediaInPage),
+    MEDIA_PRELOAD_TIMEOUT_MS,
+    { backgrounds: 0, videos: 0, revealed: 0 }
+  );
   // waitForFunction keeps a CDP binding that Cloud Run Chromium drops.
   if (!usesLocalChrome()) return;
   await page
@@ -1570,11 +1598,45 @@ async function shootControlJpeg(
   return { shot: null, method: "none" };
 }
 
+/** Decode hero media, shoot, and reshoot once if the viewport is still blank. */
+async function shootPaintedControl(
+  page: Page
+): Promise<{ shot: Screenshot | null; blank: boolean }> {
+  if (!pageStillOpen(page)) return { shot: null, blank: false };
+  await raceTimeout(
+    page.evaluate(preloadPaintedMediaInPage),
+    MEDIA_PRELOAD_TIMEOUT_MS,
+    { backgrounds: 0, videos: 0, revealed: 0 }
+  );
+  let taken = await shootControlJpeg(page);
+  let blank = await raceTimeout(
+    page.evaluate(isViewportVisuallyBlank),
+    PAGE_OP_TIMEOUT_MS,
+    false
+  );
+  if (blank && pageStillOpen(page)) {
+    await raceTimeout(
+      page.evaluate(preloadPaintedMediaInPage),
+      MEDIA_PRELOAD_TIMEOUT_MS,
+      { backgrounds: 0, videos: 0, revealed: 0 }
+    );
+    const retry = await shootControlJpeg(page);
+    if (retry.shot) taken = retry;
+    blank = await raceTimeout(
+      page.evaluate(isViewportVisuallyBlank),
+      PAGE_OP_TIMEOUT_MS,
+      false
+    );
+  }
+  return { shot: taken.shot, blank: Boolean(blank) };
+}
+
 /** Cloud Run: fold first, then consent / fonts. No walk, no waitForFunction. */
 async function captureServerlessControl(page: Page): Promise<{
   viewport: Screenshot | null;
   control: Screenshot | null;
   dismissedConsent: boolean;
+  blank: boolean;
   method: string;
 }> {
   await raceTimeout(
@@ -1592,13 +1654,14 @@ async function captureServerlessControl(page: Page): Promise<{
     PAGE_OP_TIMEOUT_MS,
     { promoted: 0, decoded: 0, total: 0 }
   );
-  const taken = await shootControlJpeg(page);
-  const control = taken.shot ?? viewport;
+  const painted = await shootPaintedControl(page);
+  const control = painted.shot ?? viewport;
   return {
     viewport,
     control,
     dismissedConsent,
-    method: taken.shot ? taken.method : viewport ? "viewport" : "none",
+    blank: painted.shot ? painted.blank : false,
+    method: painted.shot ? "painted" : viewport ? "viewport" : "none",
   };
 }
 
@@ -1643,20 +1706,22 @@ async function walkUntilPageSettled(
 
 async function captureControlFullPage(
   page: Page
-): Promise<{ shot: Screenshot | null; ready: boolean }> {
+): Promise<{ shot: Screenshot | null; ready: boolean; blank: boolean }> {
   try {
     if (!pageStillOpen(page)) {
-      return { shot: null, ready: false };
+      return { shot: null, ready: false, blank: false };
     }
     await clearVisitorConsent(page, true);
     if (!pageStillOpen(page)) {
-      return { shot: null, ready: false };
+      return { shot: null, ready: false, blank: false };
     }
     // Cloud Run: shoot before any scroll walk. The walk is what detaches the frame.
     if (!usesLocalChrome()) {
       await waitUntilDocumentPainted(page);
-      const early = await shootControlJpeg(page);
-      if (early.shot) return { shot: early.shot, ready: true };
+      const early = await shootPaintedControl(page);
+      if (early.shot) {
+        return { shot: early.shot, ready: !early.blank, blank: early.blank };
+      }
     }
     await raceTimeout(
       page.evaluate(() => window.scrollTo(0, 0)),
@@ -1674,7 +1739,7 @@ async function captureControlFullPage(
       await waitUntilDocumentPainted(page);
     }
     if (!pageStillOpen(page)) {
-      return { shot: null, ready: false };
+      return { shot: null, ready: false, blank: false };
     }
     const gateReady = await raceTimeout(
       page.evaluate(pageIsCaptureReady),
@@ -1706,22 +1771,24 @@ async function captureControlFullPage(
     );
     await waitUntilLayoutStable(page);
     if (!pageStillOpen(page)) {
-      return { shot: null, ready: false };
+      return { shot: null, ready: false, blank: false };
     }
-    const taken = await shootControlJpeg(page);
+    const taken = await shootPaintedControl(page);
     const shot = taken.shot;
+    const blank = taken.blank;
     let ready = !undecode && gateReady;
-    // A real desktop JPEG is enough. The style/blank probe false-fails short
-    // pages (example.com) and sparse heroes; only fail when visible images
-    // never decoded.
-    if (!ready && !undecode && shot) ready = true;
-    return { shot, ready };
+    // A real desktop JPEG is enough when the viewport is not a white plate.
+    // Sparse text pages (example.com) still pass the blank probe. A hero
+    // whose background or video never painted does not.
+    if (!ready && !undecode && shot && !blank) ready = true;
+    if (blank) ready = false;
+    return { shot, ready, blank };
   } catch (err) {
     console.warn(
       "[screenshot] control full-page failed:",
       (err as Error)?.message ?? err
     );
-    return { shot: null, ready: false };
+    return { shot: null, ready: false, blank: false };
   }
 }
 

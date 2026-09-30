@@ -20,6 +20,8 @@ import {
   leadFieldWaitDecision,
   shouldHideConsentNode,
   shouldRetryCapture,
+  cssBackgroundCountsAsPainted,
+  cssBackgroundUrls,
 } from "./capture-quality";
 
 function ctx(partial: Partial<PageContext> = {}): PageContext {
@@ -670,5 +672,35 @@ describe("leadFieldWaitDecision", () => {
         stableMs: 2_000,
       })
     ).toBe("ready-form");
+  });
+});
+
+describe("css background paint", () => {
+  it("pulls http(s) urls and ignores gradients", () => {
+    expect(cssBackgroundUrls("none")).toEqual([]);
+    expect(cssBackgroundUrls("linear-gradient(red, blue)")).toEqual([]);
+    expect(
+      cssBackgroundUrls(
+        'url("https://cdn.example/a.jpg"), linear-gradient(red, blue)'
+      )
+    ).toEqual(["https://cdn.example/a.jpg"]);
+    expect(
+      cssBackgroundUrls(
+        "url(https://cdn.example/a.jpg), url('https://cdn.example/b.png')"
+      )
+    ).toEqual(["https://cdn.example/a.jpg", "https://cdn.example/b.png"]);
+  });
+
+  it("counts an http background only after the ready mark", () => {
+    expect(cssBackgroundCountsAsPainted("none", null)).toBe(false);
+    expect(
+      cssBackgroundCountsAsPainted("linear-gradient(red, blue)", null)
+    ).toBe(true);
+    expect(
+      cssBackgroundCountsAsPainted('url("https://cdn.example/a.jpg")', null)
+    ).toBe(false);
+    expect(
+      cssBackgroundCountsAsPainted('url("https://cdn.example/a.jpg")', "1")
+    ).toBe(true);
   });
 });

@@ -29,9 +29,17 @@ export function isQualifyingLeadForm(
 }
 
 /**
- * Reads the lead form from the rendered document, including fields that are
- * covered or not painted. Self-contained so Puppeteer can run it in the page.
- * Returns only labels that exist on the controls — never a guessed field list.
+ * Reads the lead form from the rendered document. Self-contained so Puppeteer
+ * can run it in the page. Returns only labels that exist on the controls —
+ * never a guessed field list.
+ *
+ * A field the visitor cannot see is not part of the closed list. That includes
+ * type=hidden, the hidden attribute, aria-hidden, a zero-size box, a control
+ * parked off the form, and a field row or later multi-step step whose own
+ * layout is display:none / visibility:hidden. The above-the-fold mockup should
+ * show the step that is actually on screen. A form that is merely covered by
+ * an overlay still counts: its controls keep a real box, and the walk stops
+ * at the form element itself.
  *
  * Ignores footer / newsletter forms and any form with fewer than three inputs,
  * so a pricing page with a "Subscribe" email box is not treated as form-first.
@@ -97,6 +105,43 @@ export function readLeadFormInPage(): LeadFormSignal {
       "range",
       "color",
     ].includes(type);
+  };
+
+  // Tracking inputs (HubSpot URL / utm_*) are often type=text inside a field
+  // row that is not shown. Skip those. Do not walk into the form element
+  // itself: a form covered by an overlay still has real boxes.
+  const isNotVisibleControl = (el: Element): boolean => {
+    if (el.hasAttribute("hidden") || el.getAttribute("aria-hidden") === "true") {
+      return true;
+    }
+    const styledHidden = (node: Element): boolean => {
+      const st = getComputedStyle(node);
+      return (
+        st.display === "none" ||
+        st.visibility === "hidden" ||
+        st.visibility === "collapse"
+      );
+    };
+    if (styledHidden(el)) return true;
+    const form = el.closest("form");
+    let node = el.parentElement;
+    while (node && node !== form) {
+      if (styledHidden(node)) return true;
+      node = node.parentElement;
+    }
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) return true;
+    // left:-9999px and similar. A field that simply continues below the
+    // form is still a real control.
+    const bounds = (form ?? document.body).getBoundingClientRect();
+    if (
+      rect.right < bounds.left - 8 ||
+      rect.left > bounds.right + 8 ||
+      rect.bottom < bounds.top - 8
+    ) {
+      return true;
+    }
+    return false;
   };
 
   const isRadio = (el: Element): boolean =>
@@ -193,7 +238,7 @@ export function readLeadFormInPage(): LeadFormSignal {
     const seenRadioGroups = new Set<string>();
     return Array.from(root.querySelectorAll("input, textarea, select")).filter(
       (el) => {
-        if (isSkippable(el) || looksLikeSearch(el)) return false;
+        if (isSkippable(el) || isNotVisibleControl(el) || looksLikeSearch(el)) return false;
         if (isRadio(el)) {
           const key = el.getAttribute("name") || "";
           if (key) {
