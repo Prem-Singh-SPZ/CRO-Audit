@@ -4,7 +4,7 @@ import type {
   ComplexityLevel,
   DiyRiskLevel,
 } from "./schema";
-import type { LiveTestInfo } from "./page-context";
+import type { LandmarkId, LiveTestInfo } from "./page-context";
 
 export type ScanStatus = "QUEUED" | "RUNNING" | "COMPLETE" | "FAILED";
 
@@ -108,6 +108,12 @@ export interface IssueDto {
   annotationY: number | null;
   annotationW: number | null;
   annotationH: number | null;
+  /**
+   * Chromium landmark this pill was snapped to. Null means the finding has
+   * no measured target, so the report does not draw a pill. Omitted on
+   * reports stored before this field existed.
+   */
+  annotationElement?: LandmarkId | null;
 }
 
 export interface RecommendationDto {

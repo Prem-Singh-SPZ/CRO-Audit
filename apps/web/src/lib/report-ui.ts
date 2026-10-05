@@ -43,13 +43,21 @@ export const DIY_RISK_META: Record<
 
 export const SEVERITY_META: Record<
   SeverityLevel,
-  { label: string; badge: string; dot: string; accent: string; order: number }
+  {
+    label: string;
+    badge: string;
+    dot: string;
+    accent: string;
+    border: string;
+    order: number;
+  }
 > = {
   CRITICAL: {
     label: "Critical",
     badge: "bg-destructive text-destructive-foreground",
     dot: "bg-destructive",
     accent: "border-l-destructive",
+    border: "border-destructive",
     order: 0,
   },
   HIGH: {
@@ -57,6 +65,7 @@ export const SEVERITY_META: Record<
     badge: "bg-destructive/10 text-destructive",
     dot: "bg-destructive",
     accent: "border-l-destructive",
+    border: "border-destructive",
     order: 1,
   },
   MEDIUM: {
@@ -64,6 +73,7 @@ export const SEVERITY_META: Record<
     badge: "bg-warning/15 text-warning",
     dot: "bg-warning",
     accent: "border-l-warning",
+    border: "border-warning",
     order: 2,
   },
   LOW: {
@@ -71,6 +81,7 @@ export const SEVERITY_META: Record<
     badge: "bg-primary/10 text-primary",
     dot: "bg-primary",
     accent: "border-l-primary",
+    border: "border-primary",
     order: 3,
   },
   INFO: {
@@ -78,6 +89,7 @@ export const SEVERITY_META: Record<
     badge: "bg-muted text-muted-foreground",
     dot: "bg-muted-foreground",
     accent: "border-l-muted-foreground",
+    border: "border-muted-foreground",
     order: 4,
   },
 };

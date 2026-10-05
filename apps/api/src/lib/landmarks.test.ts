@@ -64,6 +64,13 @@ describe("inferLandmarkId", () => {
   it("maps a hero CTA title to the button, not the hero section", () => {
     expect(inferLandmarkId("Hero CTAs")).toBe("cta");
   });
+  it("maps a bottom CTA to the in-content button, not the nav", () => {
+    expect(inferLandmarkId("Bottom CTA")).toBe("cta");
+  });
+  it("maps navigation labels to the nav, including a nav button", () => {
+    expect(inferLandmarkId("Navigation Bar")).toBe("nav");
+    expect(inferLandmarkId("Navigation CTA")).toBe("nav");
+  });
   it("does not pin nearby copy onto the headline or the form", () => {
     expect(inferLandmarkId("Benefit Copy (Below Form)")).toBeNull();
   });
@@ -170,5 +177,52 @@ describe("applyLandmarkPins", () => {
     expect(out.issues[0]?.annotation?.element).toBe("cta");
     expect(out.issues[0]?.annotation?.y).toBe(0.18);
     expect(out.issues[0]?.annotation?.width).toBe(0.12);
+  });
+
+  it("drops a model coordinate that is not a measured landmark", () => {
+    const out = applyLandmarkPins(
+      reportWith([
+        {
+          category: "design",
+          title: "Too much whitespace in the hero",
+          description: "The hero has a large empty gap.",
+          whyItMatters: "",
+          severity: "LOW",
+          confidence: 60,
+          businessImpact: "",
+          suggestedFix: "teaser",
+          estimatedConversionImpact: "n/a",
+          annotation: { device: "desktop", x: 0.44, y: 0.61, width: 0.3, height: 0.2 },
+        },
+      ]),
+      landmarks
+    );
+    expect(out.issues[0]?.annotation).toBeNull();
+  });
+
+  it("drops every pin when the page has no measured landmarks", () => {
+    const out = applyLandmarkPins(
+      reportWith([
+        {
+          category: "copy",
+          title: "Weak headline",
+          description: "The H1 is vague.",
+          whyItMatters: "",
+          severity: "HIGH",
+          confidence: 80,
+          businessImpact: "",
+          suggestedFix: "teaser",
+          estimatedConversionImpact: "n/a",
+          annotation: {
+            device: "desktop",
+            x: 0.2,
+            y: 0.2,
+            element: "h1",
+          },
+        },
+      ]),
+      []
+    );
+    expect(out.issues[0]?.annotation).toBeNull();
   });
 });

@@ -100,7 +100,7 @@ describe("buildChangeCallouts", () => {
     );
   });
 
-  it("reseats boxes the locator glued to the bottom edge into the hero", () => {
+  it("drops regions the locator glued to the bottom edge", () => {
     const pins = buildChangeCallouts(
       [issue({ id: "h", title: "Headline is vague" })],
       1,
@@ -111,30 +111,20 @@ describe("buildChangeCallouts", () => {
       },
       "m1"
     );
-    const headline = pins.find((p) => p.title === "Clearer headline");
-    const bullets = pins.find((p) => p.title === "Scannable benefits");
-    const cta = pins.find((p) => p.title === "Stronger call to action");
-    expect(headline?.annotationY).toBeGreaterThan(0.35);
-    expect(headline?.annotationY).toBeLessThan(0.55);
-    expect(bullets?.annotationY ?? 0).toBeGreaterThan(headline?.annotationY ?? 1);
-    expect(bullets?.annotationY).toBeLessThan(0.75);
-    expect(cta?.annotationY).toBeLessThan(0.7);
-    expect(cta?.annotationX).toBeCloseTo(0.726);
+    expect(pins).toEqual([]);
   });
 
-  it("moves a headline box off the bottom edge up onto the title", () => {
+  it("does not invent a headline position when the locator missed", () => {
     const pins = buildChangeCallouts(
       [issue({ id: "h", title: "Headline is vague" })],
       1,
       { headline: { x: 0.709, y: 1, w: 0.398, h: 0.231 } },
       "m1"
     );
-    expect(pins).toHaveLength(1);
-    expect(pins[0]?.annotationY).toBeLessThan(0.45);
-    expect(pins[0]?.annotationX).toBeCloseTo(0.709);
+    expect(pins).toEqual([]);
   });
 
-  it("keeps a bottom-edge button on the image", () => {
+  it("keeps a measured headline and drops a missed button", () => {
     const pins = buildChangeCallouts(
       [issue({ id: "h", title: "Hero Headline" })],
       1,
@@ -144,9 +134,9 @@ describe("buildChangeCallouts", () => {
       },
       "m1"
     );
-    const cta = pins.find((p) => p.title === "Stronger call to action");
-    expect(cta?.annotationY).toBeLessThan(1);
-    expect((cta?.annotationY ?? 0) + (cta?.annotationH ?? 0) / 2).toBeLessThanOrEqual(1);
+    expect(pins.map((p) => p.title)).toEqual(["Clearer headline"]);
+    expect(pins[0]?.annotationY).toBe(regions.headline.y);
+    expect(pins[0]?.annotationX).toBe(regions.headline.x);
   });
 
   it("draws nothing when the redesign was not measured", () => {

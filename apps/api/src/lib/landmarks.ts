@@ -8,8 +8,10 @@ import {
 
 export function inferLandmarkId(text: string): LandmarkId | null {
   const t = text.toLowerCase();
-  // Specific controls first. "Hero CTAs" must not land on the hero section,
-  // and "Benefit Copy (Below Form)" must not land on the headline.
+  // Navigation before CTA so "Navigation CTA" stays on the nav, not the
+  // form button. "Hero CTAs" must not land on the hero section, and
+  // "Benefit Copy (Below Form)" must not land on the headline.
+  if (/\b(nav|menu|navigation)\b/.test(t)) return "nav";
   if (/\b(ctas?|buttons?|submits?)\b/.test(t)) return "cta";
   if (/\b(headlines?|\bh1\b|subheads?)\b/.test(t)) return "h1";
   if (
@@ -19,7 +21,6 @@ export function inferLandmarkId(text: string): LandmarkId | null {
     return "form";
   }
   if (/\b(testimonials?|reviews?)\b/.test(t)) return "testimonials";
-  if (/\b(nav|menu|navigation)\b/.test(t)) return "nav";
   if (/\bfooter\b/.test(t)) return "footer";
   if (/\bpric(e|ing)\b/.test(t)) return "pricing";
   return null;
@@ -36,7 +37,6 @@ export function applyLandmarkPins(
   report: ReportJson,
   landmarks: LandmarkBox[]
 ): ReportJson {
-  if (landmarks.length === 0) return report;
   return {
     ...report,
     issues: report.issues.map((issue) => {
@@ -48,9 +48,11 @@ export function applyLandmarkPins(
       const guessed = inferLandmarkId(issue.title);
       const named =
         explicit || (guessed ? landmarkById(landmarks, guessed) : undefined);
-      // The hero landmark is the whole section. Pinning an issue there
-      // covers the headline, the buttons, and the graphic at once.
-      if (!named || named.id === "hero") return issue;
+      // The hero landmark is the whole section. A model x/y with no measured
+      // element is a guess — drop it so the report does not draw a pill there.
+      if (!named || named.id === "hero") {
+        return { ...issue, annotation: null };
+      }
       return {
         ...issue,
         annotation: {
@@ -184,20 +186,42 @@ function measureInPage(pageWidth: number, pageHeight: number): LandmarkBox[] {
     formEl = parent instanceof HTMLElement ? parent : field;
   }
   push(formEl, "form", "Primary form");
-  const cta = Array.from(
-    document.querySelectorAll(
-      "a[class*=cta i], button[class*=cta i], a[class*=primary i], button[type=submit], form button, a[class*=button i]"
+  // Header/nav buttons (the "Demo" link) are not the page CTA. Prefer the
+  // form submit, then any other in-content control. If neither exists, leave
+  // cta unset so a Bottom CTA finding is not pinned to the nav.
+  const inChrome = (el: Element) =>
+    Boolean(el.closest("header, nav, [role=navigation]"));
+  const isContentCta = (el: Element): el is HTMLElement => {
+    if (!(el instanceof HTMLElement) || !visible(el) || inChrome(el)) return false;
+    const text = (
+      el.innerText ||
+      (el instanceof HTMLInputElement ? el.value : "") ||
+      el.getAttribute("aria-label") ||
+      ""
     )
-  ).find((el): el is HTMLElement => {
-    if (!(el instanceof HTMLElement) || !visible(el)) return false;
-    const text = (el.innerText || el.getAttribute("aria-label") || "")
       .replace(/\s+/g, " ")
       .trim();
     if (text.length < 2 || text.length > 48) return false;
     const r = el.getBoundingClientRect();
     return r.height >= 16 && r.height <= 88 && r.width >= 48 && r.width <= 480;
-  });
-  push(cta ?? null, "cta", "Primary call to action", true);
+  };
+  const formSubmit =
+    formEl && !inChrome(formEl)
+      ? Array.from(
+          formEl.querySelectorAll(
+            "button[type=submit], input[type=submit], button"
+          )
+        ).find(isContentCta) ?? null
+      : null;
+  const cta =
+    formSubmit ??
+    Array.from(
+      document.querySelectorAll(
+        "a[class*=cta i], button[class*=cta i], a[class*=primary i], button[type=submit], form button, a[class*=button i]"
+      )
+    ).find(isContentCta) ??
+    null;
+  push(cta, "cta", "Primary call to action", true);
   push(
     first(["footer", "[role=contentinfo]"]),
     "footer",

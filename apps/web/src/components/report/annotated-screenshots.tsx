@@ -26,47 +26,8 @@ import Link from "next/link";
 
 type ViewMode = "issues" | "fixes";
 
-const DEFAULT_BOX_W = 0.16;
-const DEFAULT_BOX_H = 0.08;
 const LABEL_W_PX = 208;
 const LABEL_H_PX = 34;
-
-const FIX_TONE = {
-  border: "border-primary",
-  fill: "bg-primary/15",
-  stroke: "stroke-primary",
-} as const;
-
-const BOX_TONE: Record<
-  keyof typeof SEVERITY_META,
-  { border: string; fill: string; stroke: string }
-> = {
-  CRITICAL: {
-    border: "border-destructive",
-    fill: "bg-destructive/20",
-    stroke: "stroke-destructive",
-  },
-  HIGH: {
-    border: "border-destructive",
-    fill: "bg-destructive/15",
-    stroke: "stroke-destructive",
-  },
-  MEDIUM: {
-    border: "border-warning",
-    fill: "bg-warning/20",
-    stroke: "stroke-warning",
-  },
-  LOW: {
-    border: "border-primary",
-    fill: "bg-primary/15",
-    stroke: "stroke-primary",
-  },
-  INFO: {
-    border: "border-muted-foreground",
-    fill: "bg-muted/40",
-    stroke: "stroke-muted-foreground",
-  },
-};
 
 export function AnnotatedScreenshots({
   screenshots,
@@ -128,7 +89,9 @@ export function AnnotatedScreenshots({
           (i) =>
             i.device === device &&
             i.annotationX != null &&
-            i.annotationY != null
+            i.annotationY != null &&
+            i.annotationElement !== null &&
+            i.annotationElement !== "hero"
         )
       : [];
   const heroCutoff = active
@@ -249,22 +212,6 @@ export function AnnotatedScreenshots({
   );
 }
 
-function boxFor(issue: IssueDto) {
-  const w =
-    issue.annotationW && issue.annotationW > 0
-      ? issue.annotationW
-      : DEFAULT_BOX_W;
-  const h =
-    issue.annotationH && issue.annotationH > 0
-      ? issue.annotationH
-      : DEFAULT_BOX_H;
-  const cx = issue.annotationX ?? 0.5;
-  const cy = issue.annotationY ?? 0.2;
-  const left = Math.max(0, Math.min(1 - w, cx - w / 2));
-  const top = Math.max(0, Math.min(1 - h, cy - h / 2));
-  return { left, top, w, h, cx: left + w / 2, cy: top + h / 2 };
-}
-
 function placeLabels(
   pins: IssueDto[],
   containerW: number,
@@ -272,55 +219,40 @@ function placeLabels(
 ) {
   const labelW = Math.min(0.42, LABEL_W_PX / Math.max(containerW, 1));
   const labelH = Math.min(0.08, LABEL_H_PX / Math.max(containerH, 1));
-  const placed: {
-    id: string;
-    lx: number;
-    ly: number;
-    side: "left" | "right" | "above" | "below";
-  }[] = [];
+  const placed: { id: string; lx: number; ly: number }[] = [];
+
+  const clampX = (lx: number) => Math.max(0.01, Math.min(0.99 - labelW, lx));
+  const clampY = (ly: number) => Math.max(0.004, Math.min(0.996 - labelH, ly));
+  const overlaps = (lx: number, ly: number) =>
+    placed.some(
+      (p) =>
+        Math.abs(p.lx - lx) < labelW * 0.92 &&
+        Math.abs(p.ly - ly) < labelH + 0.004
+    );
 
   for (const issue of pins) {
-    const box = boxFor(issue);
-    const gap = 0.012;
-    const roomRight = 1 - (box.left + box.w) - gap;
-    const roomLeft = box.left - gap;
-    let side: "left" | "right" | "above" | "below" =
-      box.cx < 0.5 ? "left" : "right";
-    if (side === "right" && roomRight < labelW && roomLeft >= labelW) side = "left";
-    if (side === "left" && roomLeft < labelW && roomRight >= labelW) side = "right";
+    if (issue.annotationX == null || issue.annotationY == null) continue;
+    const anchorX = clampX(issue.annotationX - labelW / 2);
+    const anchorY = clampY(issue.annotationY - labelH / 2);
+    let lx = anchorX;
+    let ly = anchorY;
 
-    let lx =
-      side === "right" ? box.left + box.w + gap : box.left - labelW - gap;
-    let ly = box.top;
-
-    const crossesMiddle =
-      (lx + labelW / 2 - 0.5) * (box.cx - 0.5) < 0 &&
-      Math.abs(lx + labelW / 2 - box.cx) > labelW * 0.6;
-    if (crossesMiddle || (side === "left" && roomLeft < labelW) || (side === "right" && roomRight < labelW)) {
-      const above = box.top - labelH - 0.008;
-      if (above >= 0.004) {
-        side = "above";
+    if (overlaps(lx, ly)) {
+      const above = anchorY - labelH - 0.006;
+      const below = clampY(anchorY + labelH + 0.006);
+      if (above >= 0.004 && !overlaps(anchorX, above)) {
         ly = above;
+      } else if (below - anchorY <= labelH * 1.25 && !overlaps(anchorX, below)) {
+        ly = below;
       } else {
-        side = "below";
-        ly = box.top + box.h + 0.008;
+        const right = clampX(anchorX + labelW * 0.35);
+        const left = clampX(anchorX - labelW * 0.35);
+        if (!overlaps(right, anchorY)) lx = right;
+        else if (!overlaps(left, anchorY)) lx = left;
       }
-      lx = box.cx < 0.5 ? box.left : box.left + box.w - labelW;
     }
 
-    lx = Math.max(0.01, Math.min(0.99 - labelW, lx));
-    ly = Math.max(0.004, Math.min(0.996 - labelH, ly));
-
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const hit = placed.some(
-        (p) =>
-          Math.abs(p.lx - lx) < labelW && Math.abs(p.ly - ly) < labelH + 0.005
-      );
-      if (!hit) break;
-      ly = Math.min(0.996 - labelH, ly + labelH + 0.008);
-    }
-
-    placed.push({ id: issue.id, lx, ly, side });
+    placed.push({ id: issue.id, lx, ly });
   }
 
   return { placed, labelW, labelH };
@@ -377,38 +309,10 @@ function ScreenshotCallouts({
       className={cn("absolute inset-0", !interactive && "pointer-events-none")}
       onClick={() => interactive && onSelectIssue?.(null)}
     >
-      <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
-        {pins.map((issue) => {
-          const box = boxFor(issue);
-          const label = labels.get(issue.id);
-          if (!label) return null;
-          const tone = mode === "fixes" ? FIX_TONE : BOX_TONE[issue.severity];
-          const vertical = label.side === "above" || label.side === "below";
-          const x1 = (vertical ? label.lx + labelW / 2 : label.side === "right" ? label.lx : label.lx + labelW) * 100;
-          const y1 = (vertical ? (label.side === "above" ? label.ly + labelH : label.ly) : label.ly + labelH / 2) * 100;
-          const x2 = (vertical ? box.cx : label.side === "right" ? box.left + box.w : box.left) * 100;
-          const y2 = (vertical ? (label.side === "above" ? box.top : box.top + box.h) : box.cy) * 100;
-          return (
-            <line
-              key={`arrow-${issue.id}`}
-              x1={`${x1}%`}
-              y1={`${y1}%`}
-              x2={`${x2}%`}
-              y2={`${y2}%`}
-              className={tone.stroke}
-              strokeWidth={selectedIssueId === issue.id ? 2 : 1.25}
-              opacity={selected && selected.id !== issue.id ? 0.25 : 0.85}
-            />
-          );
-        })}
-      </svg>
-
       {pins.map((issue, idx) => {
-        const box = boxFor(issue);
         const label = labels.get(issue.id);
         if (!label) return null;
         const meta = SEVERITY_META[issue.severity];
-        const tone = mode === "fixes" ? FIX_TONE : BOX_TONE[issue.severity];
         const isSelected = selectedIssueId === issue.id;
         const dimmed = selected && !isSelected;
 
@@ -424,70 +328,43 @@ function ScreenshotCallouts({
           : {};
 
         return (
-          <React.Fragment key={issue.id}>
-            <Mark
-              id={interactive ? `callout-${issue.id}` : undefined}
-              aria-label={interactive ? issue.title : undefined}
-              aria-pressed={interactive ? isSelected : undefined}
-              {...markProps}
+          <Mark
+            key={issue.id}
+            id={interactive ? `callout-${issue.id}` : undefined}
+            aria-label={interactive ? issue.title : undefined}
+            aria-pressed={interactive ? isSelected : undefined}
+            {...markProps}
+            className={cn(
+              "absolute z-20 flex max-w-[220px] items-center gap-1.5 rounded-full border-2 bg-background/95 px-2 py-1 text-left shadow-lg ring-2 ring-white backdrop-blur transition-opacity",
+              meta.border,
+              isSelected && "shadow-xl",
+              dimmed && "opacity-25"
+            )}
+            style={{
+              left: `${label.lx * 100}%`,
+              top: `${label.ly * 100}%`,
+              width: `${labelW * 100}%`,
+            }}
+          >
+            <span
               className={cn(
-                "absolute z-10 rounded-md border-2 transition-all",
-                tone.border,
-                tone.fill,
-                isSelected &&
-                  "z-20 shadow-[0_0_0_9999px_rgba(0,0,0,0.4)] ring-2 ring-white/80",
-                dimmed && "opacity-25"
+                "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white",
+                meta.dot
               )}
-              style={{
-                left: `${box.left * 100}%`,
-                top: `${box.top * 100}%`,
-                width: `${box.w * 100}%`,
-                height: `${box.h * 100}%`,
-              }}
             >
-              <span
-                className={cn(
-                  "absolute -left-2.5 -top-2.5 flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold text-white shadow ring-2 ring-white/80",
-                  meta.dot
-                )}
-              >
-                {idx + 1}
-              </span>
-            </Mark>
-
-            <Mark
-              {...markProps}
-              className={cn(
-                "absolute z-20 flex max-w-[220px] items-center gap-1.5 rounded-full border bg-background/95 px-2 py-1 text-left shadow-md backdrop-blur transition-opacity",
-                isSelected && "ring-2 ring-primary/40",
-                dimmed && "opacity-25"
+              {idx + 1}
+            </span>
+            <span className="min-w-0 truncate text-[11px] font-semibold leading-tight">
+              {shortCaption(issue.title, 6)}
+            </span>
+            {mode !== "fixes" &&
+              issue.estimatedConversionImpact &&
+              issue.estimatedConversionImpact !== "n/a" && (
+                <span className="shrink-0 text-[10px] font-semibold text-success">
+                  {issue.estimatedConversionImpact}
+                </span>
               )}
-              style={{
-                left: `${label.lx * 100}%`,
-                top: `${label.ly * 100}%`,
-                width: `${labelW * 100}%`,
-              }}
-            >
-              <span
-                className={cn(
-                  "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white",
-                  meta.dot
-                )}
-              >
-                {idx + 1}
-              </span>
-              <span className="min-w-0 truncate text-[11px] font-semibold leading-tight">
-                {shortCaption(issue.title, 6)}
-              </span>
-              {mode !== "fixes" &&
-                issue.estimatedConversionImpact &&
-                issue.estimatedConversionImpact !== "n/a" && (
-                  <span className="shrink-0 text-[10px] font-semibold text-success">
-                    {issue.estimatedConversionImpact}
-                  </span>
-                )}
-            </Mark>
-          </React.Fragment>
+          </Mark>
         );
       })}
 

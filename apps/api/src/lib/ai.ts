@@ -429,7 +429,7 @@ Return ONLY a valid JSON object (no markdown fences, no prose, no trailing comme
       "actionable_fix": "<a value-selling TEASER per the LEAD-GENERATION GATING RULE — NOT a how-to>",
       "estimated_conversion_impact": "<e.g. +4-9%>",
       "confidence": <int 0-100>,
-      "annotation": { "device": "desktop", "element": "<h1|cta|form|nav|footer|hero|testimonials|pricing when a MEASURED LANDMARK fits>", "band": <1-based band index if no landmark>, "x": <0-1>, "y": <0-1>, "width": <0-1>, "height": <0-1> } | null
+      "annotation": { "device": "desktop", "element": "<h1|cta|form|nav|footer|testimonials|pricing when a MEASURED LANDMARK fits>" } | null
     }
   ],
   "categoryScores": { ${SCORE_CATEGORIES.map((c) => `"${c}": <int 0-100>`).join(", ")} },
@@ -443,7 +443,7 @@ Return ONLY a valid JSON object (no markdown fences, no prose, no trailing comme
 }
 
 SCHEMA COMPLIANCE RULES
-- "annotation": ALWAYS use "device": "desktop". Prefer "element" set to a MEASURED LANDMARK id (h1, cta, form, nav, footer, hero, testimonials, pricing) when the flaw is about that element — the API will place the box from Chromium. Only invent band/x/y when no landmark fits. When you must guess, set "band" to the 1-based band index and x/y/width/height as 0–1 WITHIN THAT BAND. Use null when the flaw isn't tied to a visible spot.
+- "annotation": ALWAYS use "device": "desktop". Set "element" to a MEASURED LANDMARK id (h1, cta, form, nav, footer, testimonials, pricing) when the flaw is about that element — the API places the pill from Chromium. Do not invent x, y, width, height, or band. Use null when no measured landmark fits. Never use "hero"; that box is the whole section.
 - "element" / titles: max 8 words. "issue_discovered": one short sentence quoting real page content.
 - All ${SCORE_CATEGORIES.length} categoryScores keys are required, each 0-100.
 - "conversion_score", "primary_bottleneck", and a non-empty "flaws" array are mandatory.
@@ -489,7 +489,7 @@ function userText(input: GenerateInput): string {
     : "";
   const bandNote =
     input.bands && input.bands.length > 0
-      ? `\n\n${input.bands.length} sequential DESKTOP screenshot bands are attached (top → bottom). Inspect EVERY band. Mid-page and footer issues are as important as the hero. For each flaw, set annotation.band to the band where you see it and use x/y inside that band.`
+      ? `\n\n${input.bands.length} sequential DESKTOP screenshot bands are attached (top → bottom). Inspect EVERY band. Mid-page and footer issues are as important as the hero. Pin a flaw only by annotation.element when a measured landmark matches. Otherwise set annotation to null.`
       : `\n\nA full-page desktop screenshot is attached. Scroll through the ENTIRE screenshot — analyze the hero, mid-page content (features, testimonials, social proof, pricing), forms, and footer. Base your visual/hierarchy findings on it.`;
   return `Audit this page TOP TO BOTTOM and return the JSON report.\n\nCRAWLED SIGNALS + METRICS:\n${compactContext(
     input.pageContext,
@@ -535,7 +535,7 @@ function landmarkPrompt(landmarks?: LandmarkBox[]): string {
     (l) =>
       `- ${l.id}: "${sanitizeUntrustedText(l.text, 80)}" (x=${l.x.toFixed(2)} y=${l.y.toFixed(2)} w=${l.width.toFixed(2)} h=${l.height.toFixed(2)})`
   );
-  return `\n\nMEASURED LANDMARKS — set annotation.element to one of these ids when the flaw is about that element. Do not invent x/y for these.\n${lines.join("\n")}`;
+  return `\n\nMEASURED LANDMARKS — set annotation.element to one of these ids when the flaw is about that element. Do not invent x/y. If none of these is the element, set annotation to null.\n${lines.join("\n")}`;
 }
 
 function auditImages(input: GenerateInput): Array<{
@@ -551,7 +551,7 @@ function auditImages(input: GenerateInput): Array<{
       const zone =
         b.index === 1 ? "top / hero" : b.index === total ? "lower page / footer" : "mid page";
       return {
-        label: `Band ${b.index} of ${total} — ${zone} (full-page y ${b.startY.toFixed(2)}–${endY.toFixed(2)}). Annotation x/y are 0–1 within THIS band; set annotation.band = ${b.index}.`,
+        label: `Band ${b.index} of ${total} — ${zone} (full-page y ${b.startY.toFixed(2)}–${endY.toFixed(2)}). Do not guess annotation coordinates in this band.`,
         mimeType: b.mimeType,
         base64: b.base64,
         dataUri: b.dataUri,

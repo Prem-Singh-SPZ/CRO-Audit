@@ -58,35 +58,19 @@ function clampBox(box: MockupRegionBox): MockupRegionBox {
 }
 
 /**
- * Keep measured width and horizontal position. When the locator pasted a
- * center on the bottom edge, stack the headline and benefits in the hero
- * and sit the button beside that stack.
+ * Keep a measured box on the canvas. A center glued to the bottom edge means
+ * the locator missed the element — drop it instead of inventing a position.
  */
 function settleRegions(regions: MockupRegions): MockupRegions {
-  const headline = regions.headline ? { ...regions.headline } : undefined;
-  const bullets = regions.bullets ? { ...regions.bullets } : undefined;
-  const cta = regions.cta ? { ...regions.cta } : undefined;
-  const gap = 0.028;
-  let cursor = 0.32;
-  if (headline && bottomPinned(headline)) {
-    headline.y = cursor + headline.h / 2;
-    cursor = headline.y + headline.h / 2 + gap;
-  } else if (headline) {
-    cursor = Math.max(cursor, headline.y + headline.h / 2 + gap);
-  }
-  if (bullets && bottomPinned(bullets)) {
-    bullets.y = cursor + bullets.h / 2;
-    cursor = bullets.y + bullets.h / 2;
-  }
-  if (cta && bottomPinned(cta)) {
-    const top = headline ? headline.y - headline.h / 2 : 0.32;
-    const bottom = bullets ? bullets.y + bullets.h / 2 : cursor;
-    cta.y = (top + bottom) / 2;
-  }
+  const keep = (box?: MockupRegionBox) =>
+    box && !bottomPinned(box) ? clampBox(box) : undefined;
+  const headline = keep(regions.headline);
+  const bullets = keep(regions.bullets);
+  const cta = keep(regions.cta);
   return {
-    ...(headline ? { headline: clampBox(headline) } : {}),
-    ...(bullets ? { bullets: clampBox(bullets) } : {}),
-    ...(cta ? { cta: clampBox(cta) } : {}),
+    ...(headline ? { headline } : {}),
+    ...(bullets ? { bullets } : {}),
+    ...(cta ? { cta } : {}),
   };
 }
 

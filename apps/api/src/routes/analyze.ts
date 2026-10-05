@@ -264,6 +264,10 @@ analyze.post("/", async (c) => {
         annotationY: i.annotation?.y ?? null,
         annotationW: i.annotation?.width ?? null,
         annotationH: i.annotation?.height ?? null,
+        annotationElement:
+          i.annotation?.element && i.annotation.element !== "hero"
+            ? i.annotation.element
+            : null,
       })),
       recommendations: report.recommendations.map((r) => ({
         id: randomUUID(),
