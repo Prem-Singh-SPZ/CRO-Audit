@@ -49,10 +49,13 @@ export function ReportView({
   data,
   readOnly = false,
   mockupPending = false,
+  mockupSlow = false,
 }: {
   data: ReportResponse;
   readOnly?: boolean;
   mockupPending?: boolean;
+  /** True after the redesign has been rendering for 30 seconds. */
+  mockupSlow?: boolean;
 }) {
   const { scan, report, issues, recommendations, screenshots, lighthouse } = data;
   const mockups = data.mockups ?? [];
@@ -344,6 +347,7 @@ export function ReportView({
                         issues={issues}
                         mockups={mockups}
                         mockupPending={mockupPending}
+                        mockupSlow={mockupSlow}
                         selectedIssueId={selectedIssueId}
                         onSelectIssue={setSelectedIssueId}
                         forceView="issues"
@@ -359,6 +363,7 @@ export function ReportView({
                       screenshots={screenshots}
                       mockups={mockups}
                       mockupPending={mockupPending}
+                      mockupSlow={mockupSlow}
                       skipRedesign={Boolean(data.liveTest)}
                     />
                   </CardContent>

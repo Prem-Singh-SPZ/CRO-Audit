@@ -34,6 +34,7 @@ export function AnnotatedScreenshots({
   issues,
   mockups = [],
   mockupPending = false,
+  mockupSlow = false,
   selectedIssueId = null,
   onSelectIssue,
   teaser = false,
@@ -44,6 +45,8 @@ export function AnnotatedScreenshots({
   issues: IssueDto[];
   mockups?: MockupDto[];
   mockupPending?: boolean;
+  /** Composed preview has been waiting on Gemini for 30 seconds. */
+  mockupSlow?: boolean;
   selectedIssueId?: string | null;
   onSelectIssue?: (id: string | null) => void;
   /** Top leaks only — no redesign toggle. */
@@ -181,7 +184,7 @@ export function AnnotatedScreenshots({
             />
           </div>
         ) : (
-          <GeneratingMockup device={device} />
+          <GeneratingMockup slow={mockupSlow} />
         )
       ) : (
         <div className="relative mx-auto overflow-hidden rounded-xl border bg-muted/30">
@@ -485,17 +488,50 @@ function PatternCardGallery({
   );
 }
 
-function GeneratingMockup({ device }: { device: "desktop" }) {
+const SLOW_MOCKUP_MESSAGE =
+  "This is taking longer than expected. Your redesign is still on the way, and the finished concept will be worth the wait.";
+
+export function MockupGeneratingFrame({
+  slow = false,
+  className,
+}: {
+  slow?: boolean;
+  className?: string;
+}) {
   return (
-    <div className="mx-auto flex aspect-video max-w-full flex-col items-center justify-center gap-3 rounded-xl border bg-muted/30 text-center">
-      <Loader2 className="h-6 w-6 animate-spin text-primary" />
-      <div className="px-6">
-        <p className="text-sm font-medium">Generating your redesign concept…</p>
-        <p className="mt-1 text-xs text-muted-foreground">
+    <div
+      role="status"
+      className={cn(
+        "relative flex flex-col items-center justify-center gap-3 overflow-hidden bg-muted/40 px-6 text-center",
+        className
+      )}
+    >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 w-1/2 bg-gradient-to-r from-transparent via-primary/25 to-transparent"
+        style={{ animation: "mockup-sweep 2.8s ease-in-out infinite" }}
+      />
+      <Loader2 className="relative h-6 w-6 animate-spin text-primary" />
+      <p className="relative max-w-md text-sm font-medium leading-relaxed">
+        {slow
+          ? SLOW_MOCKUP_MESSAGE
+          : "Generating your redesign concept…"}
+      </p>
+      {slow ? null : (
+        <p className="relative text-xs text-muted-foreground">
           Our AI is applying the top fixes to your hero.
         </p>
-      </div>
+      )}
     </div>
+  );
+}
+
+function GeneratingMockup({ slow = false }: { slow?: boolean }) {
+  return (
+    <MockupGeneratingFrame
+      slow={slow}
+      className="mx-auto aspect-video max-w-full rounded-xl border"
+    />
   );
 }
 

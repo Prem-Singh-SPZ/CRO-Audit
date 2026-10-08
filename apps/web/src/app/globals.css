@@ -243,6 +243,14 @@
     transform: translateY(-10px);
   }
 }
+@keyframes mockup-sweep {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(280%);
+  }
+}
 @keyframes glow-pulse {
   0%,
   100% {

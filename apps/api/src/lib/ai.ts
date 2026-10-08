@@ -21,7 +21,7 @@ import { analyzeMock, collectHeuristicCandidates } from "./mock-ai";
 import { MIN_LEAD_FORM_FIELDS } from "./lead-form";
 import { sanitizeUntrustedText } from "./sanitize";
 import { logEvent, logWarn } from "./logger";
-import { applyLandmarkPins } from "./landmarks";
+import { applyLandmarkPins, ensureAnnotationCoverage } from "./landmarks";
 import { applyQuoteGate } from "./quote-gate";
 import type { Screenshot, ScreenshotBand } from "./screenshot";
 
@@ -85,7 +85,12 @@ function finalizeReport(
   const pinned = applyLandmarkPins(report, input.landmarks ?? []);
   const gated = applyQuoteGate(pinned, input.pageContext);
   if (gated.issues.length === 0 && !input.pageContext.liveTest) return null;
-  return gated;
+  if (input.pageContext.liveTest) return gated;
+  const pageHeight =
+    input.screenshots.find((s) => s.device === "desktop")?.height ??
+    input.screenshots[0]?.height ??
+    0;
+  return ensureAnnotationCoverage(gated, input.landmarks ?? [], pageHeight);
 }
 
 function reportCoversSections(report: ReportJson, sections: string[]): boolean {

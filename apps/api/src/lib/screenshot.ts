@@ -25,6 +25,7 @@ import {
   imagesTooIncomplete,
   inlineZeroNaturalSvgImages,
   isDeadPageError,
+  explainViewportBlank,
   isViewportVisuallyBlank,
   leadFieldWaitDecision,
   pageFontsReady,
@@ -1065,6 +1066,9 @@ async function captureScreenshotsOnce(
         control.ready = true;
         liveUsable = true;
       }
+      // #region agent log
+      fetch('http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b561ed'},body:JSON.stringify({sessionId:'b561ed',runId:'pre-fix',hypothesisId:'H5',location:'screenshot.ts:incompleteBranch',message:'capture completeness branch',data:{url,controlBlank:control.blank,controlReady:control.ready,shotCount:screenshots.length,localChrome:usesLocalChrome(),hasFormLandmark:landmarks.some((l)=>l.id==='form'),qualityIncomplete:quality.incompleteCapture,qualityNote:quality.captureNote,hasCollapsedIframe},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       if (!control.ready && screenshots.length === 0) {
         incompleteCapture = true;
         captureNote =
@@ -1628,6 +1632,12 @@ async function shootPaintedControl(
       false
     );
   }
+  // #region agent log
+  const blankExplain = pageStillOpen(page)
+    ? await raceTimeout(page.evaluate(explainViewportBlank), PAGE_OP_TIMEOUT_MS, null)
+    : null;
+  fetch('http://127.0.0.1:7896/ingest/93849ec6-8502-44d2-b7d8-9af95a6722fe',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b561ed'},body:JSON.stringify({sessionId:'b561ed',runId:'pre-fix',hypothesisId:'H1-H4',location:'screenshot.ts:shootPaintedControl',message:'viewport blank probe',data:{blank:Boolean(blank),hasShot:Boolean(taken.shot),method:taken.method,explain:blankExplain},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   return { shot: taken.shot, blank: Boolean(blank) };
 }
 

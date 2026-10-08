@@ -131,11 +131,10 @@ export async function generateFixMockups(
   const formFirst = isFormFirst(input.issues, input.leadForm);
   const patterns = patternsFor(input);
 
-  const mockups: Mockup[] = [];
-  for (const pattern of patterns) {
-    const one = await generateFixMockup(input, pattern);
-    if (one) mockups.push(one);
-  }
+  const settled = await Promise.all(
+    patterns.map((pattern) => generateFixMockup(input, pattern))
+  );
+  const mockups = settled.filter((one): one is Mockup => one != null);
 
   if (mockups.length === 0 && formFirst) {
     const fallback = await generateFixMockup(input, HERO_PATTERN);

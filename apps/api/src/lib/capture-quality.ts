@@ -282,6 +282,116 @@ export function isViewportVisuallyBlank(): boolean {
   return total > 0 && blank / total >= 0.8;
 }
 
+/** Why the viewport blank probe accepted or rejected sample points. */
+export function explainViewportBlank(): {
+  blank: number;
+  total: number;
+  ratio: number;
+  samples: {
+    tag: string;
+    textLen: number;
+    color: string;
+    background: string;
+    nearWhiteText: boolean;
+    textTooBig: boolean;
+    httpBg: boolean;
+    bgReady: boolean;
+    painted: boolean;
+  }[];
+} {
+  const vw = window.innerWidth || 1440;
+  const vh = window.innerHeight || 900;
+  const nearWhite = (color: string): boolean => {
+    const m = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+    if (!m) return false;
+    const r = Number(m[1]);
+    const g = Number(m[2]);
+    const b = Number(m[3]);
+    const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+    return luma >= 245 && chroma <= 12;
+  };
+  const samples: {
+    tag: string;
+    textLen: number;
+    color: string;
+    background: string;
+    nearWhiteText: boolean;
+    textTooBig: boolean;
+    httpBg: boolean;
+    bgReady: boolean;
+    painted: boolean;
+  }[] = [];
+  let blank = 0;
+  let total = 0;
+  const xs = [0.2, 0.5, 0.8];
+  const ys = [0.4, 0.7];
+  for (const y of ys) {
+    for (const x of xs) {
+      total += 1;
+      const el = document.elementFromPoint(vw * x, vh * y);
+      const st = el ? getComputedStyle(el) : null;
+      const ownText = el
+        ? Array.from(el.childNodes)
+            .filter((n) => n.nodeType === Node.TEXT_NODE)
+            .map((n) => (n.textContent || "").replace(/\s+/g, " ").trim())
+            .join(" ")
+        : "";
+      const box = el?.getBoundingClientRect();
+      const textTooBig = Boolean(
+        box && (box.height >= vh * 0.45 || box.width >= vw * 0.92)
+      );
+      const bg = st?.backgroundImage ?? "";
+      const httpBg = /url\(\s*['"]?https?:\/\//i.test(bg);
+      const row = {
+        tag: el?.tagName?.toLowerCase() ?? "none",
+        textLen: ownText.length,
+        color: (st?.color ?? "").slice(0, 40),
+        background: (st?.backgroundColor ?? "").slice(0, 40),
+        nearWhiteText: st ? nearWhite(st.color) : false,
+        textTooBig,
+        httpBg,
+        bgReady: el?.getAttribute("data-cro-bg-ready") === "1",
+        painted: false,
+      };
+      if (!el || el === document.documentElement || el === document.body) {
+        blank += 1;
+      } else {
+        let node: Element | null = el;
+        let ok = false;
+        for (let i = 0; i < 6 && node; i++) {
+          if (node instanceof HTMLImageElement && node.naturalWidth >= 20) ok = true;
+          const nst = getComputedStyle(node);
+          const nbox = node.getBoundingClientRect();
+          const ntext = Array.from(node.childNodes)
+            .filter((n) => n.nodeType === Node.TEXT_NODE)
+            .map((n) => (n.textContent || "").replace(/\s+/g, " ").trim())
+            .join(" ");
+          if (
+            ntext.length >= 8 &&
+            !nearWhite(nst.color) &&
+            nbox.height < vh * 0.45 &&
+            nbox.width < vw * 0.92
+          ) {
+            ok = true;
+          }
+          const nbg = nst.backgroundImage;
+          if (nbg && nbg !== "none") {
+            const http = /url\(\s*['"]?https?:\/\//i.test(nbg);
+            if (!http || node.getAttribute("data-cro-bg-ready") === "1") ok = true;
+          }
+          if (ok) break;
+          node = node.parentElement;
+        }
+        row.painted = ok;
+        if (!ok) blank += 1;
+      }
+      if (samples.length < 6) samples.push(row);
+    }
+  }
+  return { blank, total, ratio: total ? blank / total : 0, samples };
+}
+
 /**
  * If the page has a <form>, true only when that form contains a real input.
  * No form → true (nothing to wait for). Self-contained for page.evaluate.

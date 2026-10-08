@@ -12,6 +12,7 @@ import {
   Loader2,
 } from "lucide-react";
 
+import { MockupGeneratingFrame } from "./annotated-screenshots";
 import {
   estimateRealisticLift,
   groundedLiftLabel,
@@ -84,12 +85,14 @@ export function ExperimentCards({
   screenshots,
   mockups,
   mockupPending = false,
+  mockupSlow = false,
   skipRedesign = false,
 }: {
   issues: IssueDto[];
   screenshots: ScreenshotDto[];
   mockups: MockupDto[];
   mockupPending?: boolean;
+  mockupSlow?: boolean;
   skipRedesign?: boolean;
 }) {
   const groups = React.useMemo(() => groupBySection(issues), [issues]);
@@ -131,6 +134,7 @@ export function ExperimentCards({
             imageWidth={before?.width ?? 1440}
             imageHeight={before?.height ?? 900}
             mockupPending={!skipRedesign && mockupPending}
+            mockupSlow={mockupSlow}
             skipRedesign={skipRedesign}
           />
         );
@@ -188,6 +192,7 @@ function ExperimentCard({
   imageWidth,
   imageHeight,
   mockupPending = false,
+  mockupSlow = false,
   skipRedesign = false,
 }: {
   index: number;
@@ -197,6 +202,7 @@ function ExperimentCard({
   imageWidth: number;
   imageHeight: number;
   mockupPending?: boolean;
+  mockupSlow?: boolean;
   skipRedesign?: boolean;
 }) {
   const meta = SEVERITY_META[issue.severity];
@@ -228,6 +234,7 @@ function ExperimentCard({
         imageWidth={imageWidth}
         imageHeight={imageHeight}
         mockupPending={mockupPending}
+        mockupSlow={mockupSlow}
         skipRedesign={skipRedesign}
       />
 
@@ -372,6 +379,7 @@ function BeforeAfter({
   imageWidth,
   imageHeight,
   mockupPending = false,
+  mockupSlow = false,
   skipRedesign = false,
 }: {
   beforeUrl?: string;
@@ -383,6 +391,7 @@ function BeforeAfter({
   imageWidth: number;
   imageHeight: number;
   mockupPending?: boolean;
+  mockupSlow?: boolean;
   skipRedesign?: boolean;
 }) {
   const [mode, setMode] = React.useState<"before" | "after">("before");
@@ -419,7 +428,9 @@ function BeforeAfter({
               : "Current design"
         }
       >
-        {beforeUrl && active ? (
+        {showPendingConcept ? (
+          <MockupGeneratingFrame slow={mockupSlow} className="absolute inset-0" />
+        ) : beforeUrl && active ? (
           <>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -438,25 +449,19 @@ function BeforeAfter({
             No preview available
           </div>
         )}
-        {showPendingConcept ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/70 text-center backdrop-blur-sm">
-            <Loader2 className="h-5 w-5 animate-spin text-primary" />
-            <p className="px-4 text-xs font-medium">
-              Generating your redesign concept…
-            </p>
-          </div>
-        ) : null}
       </div>
       {/* Label */}
       <span
         className={cn(
           "absolute left-3 top-3 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold shadow-sm backdrop-blur",
-          mode === "after" && hasAfter
+          showPendingConcept || (mode === "after" && hasAfter)
             ? "bg-primary/90 text-primary-foreground"
             : "bg-background/85 text-muted-foreground"
         )}
       >
-        {mode === "after" && hasAfter ? (
+        {showPendingConcept ? (
+          "Generating"
+        ) : mode === "after" && hasAfter ? (
           <>
             <Sparkles className="h-3 w-3" />
             After (concept)

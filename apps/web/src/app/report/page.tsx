@@ -42,6 +42,7 @@ export default function ReportPage() {
   const [data, setData] = React.useState<ReportResponse | null>(null);
   const [ready, setReady] = React.useState(false);
   const [mockupPending, setMockupPending] = React.useState(false);
+  const [mockupSlow, setMockupSlow] = React.useState(false);
   const inFlight = React.useRef(false);
 
   React.useEffect(() => {
@@ -54,8 +55,8 @@ export default function ReportPage() {
     setReady(true);
   }, []);
 
-  // Fetch the "after" concept out-of-band. Retry Gemini, then always compose
-  // an overlay on the real screenshot so "If we redesigned it" never blanks.
+  // Fetch the "after" concept out-of-band. The redesign tab shows a loader
+  // until Gemini returns. If that fails, compose an overlay on the screenshot.
   React.useEffect(() => {
     if (!data || data.blocked) return;
     if (data.liveTest || data.incompleteCapture) {
@@ -77,7 +78,9 @@ export default function ReportPage() {
     inFlight.current = true;
 
     const controller = new AbortController();
+    setMockupSlow(false);
     setMockupPending(true);
+    const slowTimer = window.setTimeout(() => setMockupSlow(true), 30_000);
 
     (async () => {
       try {
@@ -137,12 +140,15 @@ export default function ReportPage() {
         const composed = composeMockup(data);
         if (composed) persistMockups([composed], setData);
       } finally {
+        window.clearTimeout(slowTimer);
+        setMockupSlow(false);
         setMockupPending(false);
         inFlight.current = false;
       }
     })();
 
     return () => {
+      window.clearTimeout(slowTimer);
       controller.abort();
       inFlight.current = false;
     };
@@ -176,5 +182,11 @@ export default function ReportPage() {
     );
   }
 
-  return <ReportView data={data} mockupPending={mockupPending} />;
+  return (
+    <ReportView
+      data={data}
+      mockupPending={mockupPending}
+      mockupSlow={mockupPending && mockupSlow}
+    />
+  );
 }

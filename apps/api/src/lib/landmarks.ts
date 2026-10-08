@@ -1,6 +1,7 @@
 import type { Page } from "puppeteer-core";
 import {
   LANDMARK_IDS,
+  type IssueInput,
   type LandmarkBox,
   type LandmarkId,
   type ReportJson,
@@ -66,6 +67,99 @@ export function applyLandmarkPins(
       };
     }),
   };
+}
+
+/** One viewport. Extra screens add annotations, capped by measured landmarks. */
+const VIEWPORT_HEIGHT = 900;
+
+const PIN_PRIORITY: LandmarkId[] = [
+  "h1",
+  "cta",
+  "form",
+  "testimonials",
+  "pricing",
+  "nav",
+  "footer",
+];
+
+/**
+ * How many distinct on-page pills a screenshot should show.
+ * A single screen gets 2, a second screen gets 3, and taller pages add more.
+ */
+export function annotationTarget(pageHeight: number): number {
+  const screens = Math.max(1, pageHeight / VIEWPORT_HEIGHT);
+  if (screens < 1.4) return 2;
+  if (screens < 2.4) return 3;
+  return Math.min(PIN_PRIORITY.length, Math.round(screens + 2));
+}
+
+function pinnedElement(issue: IssueInput): LandmarkId | null {
+  const id = issue.annotation?.element;
+  if (!id || id === "hero") return null;
+  return id;
+}
+
+function landmarkIssue(landmark: LandmarkBox): IssueInput {
+  const quoted = landmark.text.replace(/\s+/g, " ").trim().slice(0, 140);
+  return {
+    category: landmark.label,
+    title: landmark.label,
+    description: quoted
+      ? `Visible on the page: "${quoted}".`
+      : `${landmark.label} is visible on this page.`,
+    whyItMatters: "Visitors make a decision at this element.",
+    psychology: "Visitors make a decision at this element.",
+    severity: "INFO",
+    confidence: 60,
+    businessImpact: "",
+    suggestedFix: "Requires custom UX/copywriting redesign.",
+    estimatedConversionImpact: "n/a",
+    annotation: {
+      device: "desktop",
+      x: landmark.x,
+      y: landmark.y,
+      width: landmark.width,
+      height: landmark.height,
+      element: landmark.id,
+    },
+  };
+}
+
+/**
+ * Fill out the screenshot until it has the page-length minimum, using only
+ * Chromium landmarks that are not already pinned. Never invents a coordinate.
+ * The hero box is skipped — it covers the whole section.
+ */
+export function ensureAnnotationCoverage(
+  report: ReportJson,
+  landmarks: LandmarkBox[],
+  pageHeight: number
+): ReportJson {
+  if (pageHeight <= 0 || landmarks.length === 0) return report;
+  const usable = landmarks.filter((l) => l.id !== "hero");
+  const used = new Set(
+    report.issues.map(pinnedElement).filter((id): id is LandmarkId => id != null)
+  );
+  const target = Math.min(annotationTarget(pageHeight), usable.length);
+  if (used.size >= target) return report;
+
+  const unused = usable
+    .filter((l) => !used.has(l.id))
+    .sort((a, b) => {
+      const rank = (id: LandmarkId) => {
+        const i = PIN_PRIORITY.indexOf(id);
+        return i === -1 ? PIN_PRIORITY.length : i;
+      };
+      return rank(a.id) - rank(b.id) || a.y - b.y;
+    });
+
+  const added: IssueInput[] = [];
+  for (const landmark of unused) {
+    if (used.size + added.length >= target) break;
+    added.push(landmarkIssue(landmark));
+  }
+  if (added.length === 0) return report;
+  return { ...report, issues: [...report.issues, ...added] };
 }
 
 /**

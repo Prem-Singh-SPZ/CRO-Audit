@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ReportJson } from "@cro/shared";
-import { applyLandmarkPins, inferLandmarkId } from "./landmarks";
+import {
+  annotationTarget,
+  applyLandmarkPins,
+  ensureAnnotationCoverage,
+  inferLandmarkId,
+} from "./landmarks";
 
 const landmarks = [
   {
@@ -224,5 +229,109 @@ describe("applyLandmarkPins", () => {
       []
     );
     expect(out.issues[0]?.annotation).toBeNull();
+  });
+});
+
+describe("annotationTarget", () => {
+  it("asks for 2 pills on one screen and more as the page grows", () => {
+    expect(annotationTarget(900)).toBe(2);
+    expect(annotationTarget(1600)).toBe(3);
+    expect(annotationTarget(3200)).toBeGreaterThan(3);
+  });
+});
+
+describe("ensureAnnotationCoverage", () => {
+  const page = [
+    ...landmarks,
+    {
+      id: "cta" as const,
+      label: "Primary call to action",
+      text: "Request a demo",
+      x: 0.48,
+      y: 0.42,
+      width: 0.16,
+      height: 0.04,
+    },
+    {
+      id: "testimonials" as const,
+      label: "Social proof",
+      text: "Trusted by teams",
+      x: 0.5,
+      y: 0.7,
+      width: 0.6,
+      height: 0.12,
+    },
+    {
+      id: "footer" as const,
+      label: "Footer",
+      text: "Privacy policy",
+      x: 0.5,
+      y: 0.92,
+      width: 0.8,
+      height: 0.08,
+    },
+    {
+      id: "hero" as const,
+      label: "Hero",
+      text: "Track AI Impact",
+      x: 0.5,
+      y: 0.3,
+      width: 1,
+      height: 0.4,
+    },
+  ];
+
+  it("adds measured pills until a short page has two, and skips the hero", () => {
+    const out = ensureAnnotationCoverage(
+      reportWith([
+        {
+          category: "design",
+          title: "Too much whitespace",
+          description: "The hero has a large empty gap.",
+          whyItMatters: "",
+          severity: "LOW",
+          confidence: 60,
+          businessImpact: "",
+          suggestedFix: "teaser",
+          estimatedConversionImpact: "n/a",
+          annotation: null,
+        },
+      ]),
+      page,
+      900
+    );
+    const pinned = out.issues.filter((i) => i.annotation?.element);
+    expect(pinned.map((i) => i.annotation?.element)).toEqual(["h1", "cta"]);
+    expect(pinned.some((i) => i.annotation?.element === "hero")).toBe(false);
+    expect(pinned[0]?.annotation?.x).toBe(0.72);
+  });
+
+  it("adds a lower landmark on a taller page", () => {
+    const out = ensureAnnotationCoverage(reportWith([]), page, 2800);
+    const ids = out.issues.map((i) => i.annotation?.element);
+    expect(ids.length).toBeGreaterThanOrEqual(4);
+    expect(ids).toContain("footer");
+  });
+
+  it("does not add a pill when nothing was measured", () => {
+    const out = ensureAnnotationCoverage(
+      reportWith([
+        {
+          category: "copy",
+          title: "Weak headline",
+          description: "The H1 is vague.",
+          whyItMatters: "",
+          severity: "HIGH",
+          confidence: 80,
+          businessImpact: "",
+          suggestedFix: "teaser",
+          estimatedConversionImpact: "n/a",
+          annotation: null,
+        },
+      ]),
+      [],
+      2400
+    );
+    expect(out.issues.every((i) => i.annotation == null)).toBe(true);
   });
 });
