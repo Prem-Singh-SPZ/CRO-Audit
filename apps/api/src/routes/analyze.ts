@@ -332,7 +332,7 @@ const CONTROL_LOCATE_MAX_CHARS = 3_000_000;
  *  the primary button or form on the control screenshot. */
 async function landmarksForReport(
   shot: ScreenshotResult,
-  liveTest: { vendor: string } | null
+  liveTest: { vendor: string } | null | undefined
 ) {
   const measured = shot.landmarks;
   if (liveTest || measured.some((landmark) => landmark.id !== "hero")) {
