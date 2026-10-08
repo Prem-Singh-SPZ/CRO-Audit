@@ -12,6 +12,8 @@ import {
   type MockupRegions,
   type MockupRegionBox,
   type MockupVariant,
+  type LandmarkBox,
+  type LandmarkId,
 } from "@cro/shared";
 
 export interface Mockup {
@@ -599,15 +601,42 @@ export function mockupComplianceFailures(
  * actually contains (for the compliance gate). Missing keys stay unannotated;
  * a failed call returns empty regions and null checks (fail-open).
  */
-async function inspectMockup(
+const LOCATE_MODEL = () =>
+  process.env.MOCKUP_LOCATE_MODEL ||
+  process.env.GEMINI_MODEL ||
+  "gemini-3.1-pro-preview";
+
+const REDESIGN_INSPECT_PROMPT = `This image is a finished desktop webpage redesign. Return JSON only:
+{"headline":{"x":0,"y":0,"w":0,"h":0}|null,"bullets":{"x":0,"y":0,"w":0,"h":0}|null,"cta":{"x":0,"y":0,"w":0,"h":0}|null,"checks":{"formFieldCount":0,"headlineLines":0,"bulletCount":0,"navItemCount":0,"gibberishText":false,"primaryButtonVisible":false,"contentCutOff":false}}
+x and y are the CENTER of the element as fractions of image width and height (0-1). w and h are the element size as fractions.
+headline = the main H1 text block only.
+bullets = the short benefit list or trust line directly under the headline. null if absent.
+cta = the filled primary BUTTON only, tight on the button pixels. If the primary action is a form, box that form panel. null if you cannot see a button or form.
+Use null for anything you cannot see. Never box empty space, logos, or the whole hero.
+checks (count carefully, use null for anything you cannot judge):
+- formFieldCount: number of visible form INPUT controls (text boxes, selects, textareas — not the submit button). 0 if no form.
+- headlineLines: how many rendered text lines the main H1 wraps to.
+- bulletCount: number of short benefit bullets under the headline. 0 if none.
+- navItemCount: header/nav links or buttons besides the logo. 0 if the header is logo-only.
+- gibberishText: true only if any visible word is misspelled, garbled, or not a real word.
+- primaryButtonVisible: true only if a real filled submit/CTA BUTTON with a text label is fully visible. A phone country-prefix, an input box, or a half-cropped button does not count.
+- contentCutOff: true if any form field, button, headline, or text block is visibly clipped by an edge of the image (e.g. the form continues past the bottom).`;
+
+const CONTROL_LOCATE_PROMPT = `This image is a live desktop webpage screenshot. Return JSON only:
+{"headline":{"x":0,"y":0,"w":0,"h":0}|null,"bullets":{"x":0,"y":0,"w":0,"h":0}|null,"cta":{"x":0,"y":0,"w":0,"h":0}|null}
+x and y are the CENTER of the element as fractions of image width and height (0-1). w and h are the element size as fractions.
+headline = the main H1 text block only.
+bullets = the short benefit list or trust line directly under the headline. null if absent.
+cta = the filled primary BUTTON only, tight on the button pixels. If the primary action is a form, box that form panel. null if you cannot see a button or form.
+Use null for anything you cannot see. Never box empty space, logos, cookie dialogs, or the whole hero.`;
+
+async function askVisionJson(
   apiKey: string,
   mimeType: string,
-  data: string
-): Promise<{ regions: MockupRegions; checks: MockupChecks | null }> {
-  const model =
-    process.env.MOCKUP_LOCATE_MODEL ||
-    process.env.GEMINI_MODEL ||
-    "gemini-3.1-pro-preview";
+  data: string,
+  prompt: string
+): Promise<unknown | null> {
+  const model = LOCATE_MODEL();
   try {
     const res = await withTimeout(
       (signal) =>
@@ -624,23 +653,7 @@ async function inspectMockup(
               contents: [
                 {
                   parts: [
-                    {
-                      text: `This image is a finished desktop webpage redesign. Return JSON only:
-{"headline":{"x":0,"y":0,"w":0,"h":0}|null,"bullets":{"x":0,"y":0,"w":0,"h":0}|null,"cta":{"x":0,"y":0,"w":0,"h":0}|null,"checks":{"formFieldCount":0,"headlineLines":0,"bulletCount":0,"navItemCount":0,"gibberishText":false,"primaryButtonVisible":false,"contentCutOff":false}}
-x and y are the CENTER of the element as fractions of image width and height (0-1). w and h are the element size as fractions.
-headline = the main H1 text block only.
-bullets = the short benefit list or trust line directly under the headline. null if absent.
-cta = the filled primary BUTTON only, tight on the button pixels. If the primary action is a form, box that form panel. null if you cannot see a button or form.
-Use null for anything you cannot see. Never box empty space, logos, or the whole hero.
-checks (count carefully, use null for anything you cannot judge):
-- formFieldCount: number of visible form INPUT controls (text boxes, selects, textareas — not the submit button). 0 if no form.
-- headlineLines: how many rendered text lines the main H1 wraps to.
-- bulletCount: number of short benefit bullets under the headline. 0 if none.
-- navItemCount: header/nav links or buttons besides the logo. 0 if the header is logo-only.
-- gibberishText: true only if any visible word is misspelled, garbled, or not a real word.
-- primaryButtonVisible: true only if a real filled submit/CTA BUTTON with a text label is fully visible. A phone country-prefix, an input box, or a half-cropped button does not count.
-- contentCutOff: true if any form field, button, headline, or text block is visibly clipped by an edge of the image (e.g. the form continues past the bottom).`,
-                    },
+                    { text: prompt },
                     { inlineData: { mimeType, data } },
                   ],
                 },
@@ -656,7 +669,7 @@ checks (count carefully, use null for anything you cannot judge):
     );
     if (!res.ok) {
       console.warn("[mockup] inspection HTTP", res.status, "model", model);
-      return { regions: {}, checks: null };
+      return null;
     }
     const json = (await res.json()) as {
       candidates?: { content?: { parts?: { text?: string }[] } }[];
@@ -664,18 +677,85 @@ checks (count carefully, use null for anything you cannot judge):
     const text = json.candidates?.[0]?.content?.parts
       ?.map((p) => p.text ?? "")
       .join("");
-    let parsed: unknown = null;
-    try {
-      parsed = JSON.parse(text ?? "");
-    } catch {
-      return { regions: {}, checks: null };
-    }
-    return {
-      regions: parseMockupRegions(parsed),
-      checks: parseMockupChecks((parsed as Record<string, unknown>)?.checks),
-    };
+    return JSON.parse(text ?? "");
   } catch (err) {
     console.warn("[mockup] inspection failed:", (err as Error)?.message ?? err);
-    return { regions: {}, checks: null };
+    return null;
   }
+}
+
+async function inspectMockup(
+  apiKey: string,
+  mimeType: string,
+  data: string
+): Promise<{ regions: MockupRegions; checks: MockupChecks | null }> {
+  const parsed = await askVisionJson(
+    apiKey,
+    mimeType,
+    data,
+    REDESIGN_INSPECT_PROMPT
+  );
+  if (!parsed || typeof parsed !== "object") return { regions: {}, checks: null };
+  return {
+    regions: parseMockupRegions(parsed),
+    checks: parseMockupChecks((parsed as Record<string, unknown>).checks),
+  };
+}
+
+/**
+ * When Chromium measured no landmarks, place control pills from the same
+ * headline / button boxes the redesign callouts use. A tall primary box is
+ * the form panel. A center glued to the bottom edge is dropped.
+ */
+export function landmarksFromRegions(
+  regions: MockupRegions,
+  frame?: { sourceHeight: number; stitchHeight: number }
+): LandmarkBox[] {
+  const sourceHeight = frame?.sourceHeight ?? 0;
+  const stitchHeight = frame?.stitchHeight ?? 0;
+  const scale =
+    sourceHeight > 0 && stitchHeight > sourceHeight
+      ? sourceHeight / stitchHeight
+      : 1;
+  const specs: { key: keyof MockupRegions; id: LandmarkId; label: string }[] =
+    [
+      { key: "headline", id: "h1", label: "Primary headline" },
+      { key: "cta", id: "cta", label: "Primary call to action" },
+    ];
+  const out: LandmarkBox[] = [];
+  for (const spec of specs) {
+    const box = regions[spec.key];
+    if (!box || box.y >= 0.98) continue;
+    const height = box.h * scale;
+    const id: LandmarkId =
+      spec.id === "cta" && height >= 0.18 ? "form" : spec.id;
+    out.push({
+      id,
+      label: id === "form" ? "Primary form" : spec.label,
+      text: "",
+      x: box.x,
+      y: box.y * scale,
+      width: box.w,
+      height,
+    });
+  }
+  return out;
+}
+
+/** Vision fallback for the control screenshot when DOM landmarks are empty. */
+export async function locateControlLandmarks(
+  imageBase64: string,
+  mimeType: string,
+  frame?: { sourceHeight: number; stitchHeight: number }
+): Promise<LandmarkBox[]> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey || !imageBase64) return [];
+  const parsed = await askVisionJson(
+    apiKey,
+    mimeType || "image/jpeg",
+    imageBase64,
+    CONTROL_LOCATE_PROMPT
+  );
+  if (!parsed) return [];
+  return landmarksFromRegions(parseMockupRegions(parsed), frame);
 }

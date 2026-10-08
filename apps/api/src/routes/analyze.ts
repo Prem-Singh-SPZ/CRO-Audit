@@ -9,9 +9,10 @@ import {
 } from "@cro/shared";
 import { analyzePage, analyzeRenderedHtml } from "../lib/analyzer";
 import { getPageSpeed, fallbackLighthouse } from "../lib/pagespeed";
-import { captureScreenshots } from "../lib/screenshot";
+import { captureScreenshots, type ScreenshotResult } from "../lib/screenshot";
 import { applyCaptureOutcome } from "../lib/capture-quality";
 import { generateReport } from "../lib/ai";
+import { locateControlLandmarks } from "../lib/mockup";
 import { buildCompetitorCompare } from "../lib/compare-dimensions";
 import { assertSafeExternalUrl, UnsafeUrlError } from "../lib/net-guard";
 import { getClientIp, rateLimit, RATE_LIMITS } from "../lib/rate-limit";
@@ -178,13 +179,14 @@ analyze.post("/", async (c) => {
     }
 
     const lighthouse = pageSpeed.lighthouse ?? fallbackLighthouse(pageContext);
+    const landmarks = await landmarksForReport(screenshotResult, pageContext.liveTest);
     const { report, provider, fallbackReason } = await generateReport({
       pageContext,
       lighthouse,
       screenshots,
       bands: screenshotResult.bands,
       auditContext,
-      landmarks: screenshotResult.landmarks,
+      landmarks,
     });
 
     const now = new Date().toISOString();
@@ -204,7 +206,8 @@ analyze.post("/", async (c) => {
       issues: report.issues.length,
       hasScreenshot: screenshots.length > 0,
       bands: screenshotResult.bands.length,
-      landmarks: screenshotResult.landmarks.length,
+      landmarks: landmarks.length,
+      landmarksFromVision: landmarks !== screenshotResult.landmarks,
       durationMs: Date.now() - startedAt,
     });
 
@@ -322,5 +325,38 @@ analyze.post("/", async (c) => {
     inflight.delete(cacheKey);
   }
 });
+
+const CONTROL_LOCATE_MAX_CHARS = 3_000_000;
+
+/** DOM landmarks when Chromium found any. Otherwise locate the headline and
+ *  the primary button or form on the control screenshot. */
+async function landmarksForReport(
+  shot: ScreenshotResult,
+  liveTest: { vendor: string } | null
+) {
+  const measured = shot.landmarks;
+  if (liveTest || measured.some((landmark) => landmark.id !== "hero")) {
+    return measured;
+  }
+  const desktop =
+    shot.screenshots.find((item) => item.device === "desktop") ??
+    shot.screenshots[0];
+  if (!desktop?.base64) return measured;
+  const hero = shot.heroShot;
+  const useHero = desktop.base64.length > CONTROL_LOCATE_MAX_CHARS && !!hero?.base64;
+  const source = useHero && hero ? hero : desktop;
+  const located = await locateControlLandmarks(
+    source.base64,
+    source.mimeType,
+    useHero
+      ? { sourceHeight: source.height, stitchHeight: desktop.height }
+      : undefined
+  );
+  if (located.length === 0) return measured;
+  console.log(
+    `[analyze] control landmarks from screenshot: ${located.map((l) => l.id).join(",")}`
+  );
+  return located;
+}
 
 export default analyze;

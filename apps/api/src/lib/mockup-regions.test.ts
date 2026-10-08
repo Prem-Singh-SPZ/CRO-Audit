@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   copyStackedAboveForm,
+  landmarksFromRegions,
   mockupComplianceFailures,
   parseMockupChecks,
   parseMockupRegions,
@@ -28,6 +29,39 @@ describe("parseMockupRegions", () => {
       })
     );
     expect(regions.headline).toEqual({ x: 0.709, y: 1, w: 0.398, h: 0.231 });
+  });
+});
+
+describe("landmarksFromRegions", () => {
+  it("pins the headline and a button", () => {
+    const landmarks = landmarksFromRegions({
+      headline: { x: 0.42, y: 0.31, w: 0.4, h: 0.1 },
+      cta: { x: 0.7, y: 0.55, w: 0.16, h: 0.06 },
+    });
+    expect(landmarks.map((l) => l.id)).toEqual(["h1", "cta"]);
+    expect(landmarks[0]).toMatchObject({ x: 0.42, y: 0.31, width: 0.4, height: 0.1 });
+  });
+
+  it("drops a box glued to the bottom edge", () => {
+    const landmarks = landmarksFromRegions({
+      cta: { x: 0.7, y: 0.99, w: 0.16, h: 0.06 },
+    });
+    expect(landmarks).toEqual([]);
+  });
+
+  it("treats a tall primary box as the form", () => {
+    const landmarks = landmarksFromRegions({
+      cta: { x: 0.72, y: 0.48, w: 0.34, h: 0.4 },
+    });
+    expect(landmarks.map((l) => l.id)).toEqual(["form"]);
+  });
+
+  it("scales a hero-fold box onto a taller stitch", () => {
+    const landmarks = landmarksFromRegions(
+      { headline: { x: 0.4, y: 0.2, w: 0.3, h: 0.1 } },
+      { sourceHeight: 900, stitchHeight: 1800 }
+    );
+    expect(landmarks[0]).toMatchObject({ y: 0.1, height: 0.05 });
   });
 });
 
