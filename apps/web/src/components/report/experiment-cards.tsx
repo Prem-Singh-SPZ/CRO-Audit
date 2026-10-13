@@ -397,8 +397,22 @@ function BeforeAfter({
   const [mode, setMode] = React.useState<"before" | "after">("before");
   const hasAfter = !skipRedesign && !!afterUrl;
   const pending = !skipRedesign && mockupPending && !hasAfter;
-  const showAfter = mode === "after" && hasAfter;
-  const showPendingConcept = mode === "after" && pending;
+  const [finishing, setFinishing] = React.useState(false);
+  const wasPending = React.useRef(false);
+  React.useEffect(() => {
+    if (pending) {
+      wasPending.current = true;
+      setFinishing(false);
+      return;
+    }
+    if (wasPending.current && hasAfter) {
+      setFinishing(true);
+      wasPending.current = false;
+    }
+  }, [pending, hasAfter]);
+  const showLoader = pending || finishing;
+  const showAfter = mode === "after" && hasAfter && !finishing;
+  const showPendingConcept = mode === "after" && showLoader;
   const active = showAfter ? afterUrl : beforeUrl;
   const frame = experimentPreviewFrame({
     x: showAfter ? null : x,
@@ -410,10 +424,10 @@ function BeforeAfter({
   });
 
   React.useEffect(() => {
-    if (mode === "after" && !hasAfter && !pending) {
+    if (mode === "after" && !hasAfter && !showLoader) {
       setMode("before");
     }
-  }, [mode, hasAfter, pending]);
+  }, [mode, hasAfter, showLoader]);
 
   return (
     <div className="relative border-b bg-muted/30">
@@ -429,7 +443,12 @@ function BeforeAfter({
         }
       >
         {showPendingConcept ? (
-          <MockupGeneratingFrame slow={mockupSlow} className="absolute inset-0" />
+          <MockupGeneratingFrame
+            slow={mockupSlow}
+            complete={finishing}
+            onComplete={() => setFinishing(false)}
+            className="absolute inset-0"
+          />
         ) : beforeUrl && active ? (
           <>
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -489,7 +508,7 @@ function BeforeAfter({
         <button
           type="button"
           onClick={() => {
-            if (!hasAfter && !pending) return;
+            if (!hasAfter && !showLoader) return;
             setMode("after");
           }}
           aria-pressed={mode === "after"}
@@ -500,7 +519,7 @@ function BeforeAfter({
               : "text-muted-foreground hover:text-foreground"
           )}
         >
-          {pending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+          {showLoader ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
           Concept
         </button>
       </div>

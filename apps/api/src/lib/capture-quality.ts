@@ -225,6 +225,15 @@ export function isViewportVisuallyBlank(): boolean {
       if (node instanceof HTMLImageElement && node.naturalWidth >= 20) {
         return true;
       }
+      // Canvas / SVG heroes (e.g. FlowX agent log) paint without <img> or CSS bg.
+      if (
+        node instanceof HTMLCanvasElement ||
+        node instanceof HTMLVideoElement ||
+        node instanceof SVGSVGElement
+      ) {
+        const box = node.getBoundingClientRect();
+        if (box.width >= 40 && box.height >= 40) return true;
+      }
       if (
         node instanceof HTMLInputElement ||
         node instanceof HTMLTextAreaElement ||
@@ -361,6 +370,14 @@ export function explainViewportBlank(): {
         let ok = false;
         for (let i = 0; i < 6 && node; i++) {
           if (node instanceof HTMLImageElement && node.naturalWidth >= 20) ok = true;
+          if (
+            node instanceof HTMLCanvasElement ||
+            node instanceof HTMLVideoElement ||
+            node instanceof SVGSVGElement
+          ) {
+            const nbox = node.getBoundingClientRect();
+            if (nbox.width >= 40 && nbox.height >= 40) ok = true;
+          }
           const nst = getComputedStyle(node);
           const nbox = node.getBoundingClientRect();
           const ntext = Array.from(node.childNodes)
