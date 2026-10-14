@@ -959,9 +959,11 @@ export function pageIsCaptureReady(): boolean {
   const vh = window.innerHeight || 900;
 
   for (const el of Array.from(
-    document.querySelectorAll("[aria-busy], [class*='loading' i], [class*='spinner' i], [class*='skeleton' i], svg")
+    document.querySelectorAll(
+      "[aria-busy], [class*='loading' i], [class*='spinner' i], [class*='skeleton' i]"
+    )
   )) {
-    if (!(el instanceof HTMLElement) && !(el instanceof SVGElement)) continue;
+    if (!(el instanceof HTMLElement)) continue;
     const st = getComputedStyle(el);
     if (
       st.display === "none" ||
@@ -971,6 +973,7 @@ export function pageIsCaptureReady(): boolean {
       continue;
     }
     const r = el.getBoundingClientRect();
+    if (r.width < 80 || r.height < 80) continue;
     if (r.bottom < 0 || r.top > vh || r.right < 0 || r.left > vw) continue;
     const t = (el.textContent || "").replace(/\s+/g, " ").trim();
     if (el.getAttribute("aria-busy") === "true") return false;
@@ -981,56 +984,7 @@ export function pageIsCaptureReady(): boolean {
     ) {
       return false;
     }
-    const cls = (el.getAttribute("class") || "").toLowerCase();
-    // Full-viewport chrome still uses the 80px floor. Form-card throbbers
-    // (Adherent HubSpot) are often 32–72px SVG circles — treat those as
-    // not-ready when they sit in a large near-empty fold card.
-    if (/\b(loading|spinner|skeleton)\b/i.test(cls)) {
-      if (r.width >= 80 && r.height >= 80) return false;
-    }
-    if (
-      el instanceof SVGElement &&
-      r.width >= 24 &&
-      r.width <= 96 &&
-      r.height >= 24 &&
-      r.height <= 96 &&
-      Math.abs(r.width - r.height) <= 8
-    ) {
-      const card = el.closest("div, section, aside, article");
-      if (card instanceof HTMLElement) {
-        const cr = card.getBoundingClientRect();
-        const textLen = (card.innerText || "").replace(/\s+/g, " ").trim().length;
-        const leads = card.querySelectorAll(
-          "input[type='email'], input[type='text'], input[type='tel'], textarea, select"
-        ).length;
-        if (
-          cr.width >= vw * 0.22 &&
-          cr.height >= 180 &&
-          textLen <= 60 &&
-          leads < 2
-        ) {
-          return false;
-        }
-      }
-    }
-    if (/\b(loading|spinner|skeleton)\b/i.test(cls) && r.width >= 24 && r.height >= 24) {
-      const card = el.closest("div, section, aside, article");
-      if (card instanceof HTMLElement) {
-        const cr = card.getBoundingClientRect();
-        const textLen = (card.innerText || "").replace(/\s+/g, " ").trim().length;
-        const leads = card.querySelectorAll(
-          "input[type='email'], input[type='text'], input[type='tel'], textarea, select"
-        ).length;
-        if (
-          cr.width >= vw * 0.22 &&
-          cr.height >= 180 &&
-          textLen <= 60 &&
-          leads < 2
-        ) {
-          return false;
-        }
-      }
-    }
+    if (/\b(loading|spinner|skeleton)\b/i.test(el.className)) return false;
   }
 
   for (const img of Array.from(document.images)) {
@@ -1396,37 +1350,6 @@ export function formEmbedStillPendingInPage(): string | null {
     if (getComputedStyle(form).display === "none") continue;
     if (form.childElementCount === 0) return "empty Marketo form";
   }
-  // Spinner-only hero card before HubSpot mounts (must stay inlined — evaluate
-  // cannot call other module functions).
-  {
-    const vw = window.innerWidth || 1440;
-    const vh = window.innerHeight || 900;
-    for (const el of Array.from(
-      document.querySelectorAll("div, section, aside, article")
-    )) {
-      if (!(el instanceof HTMLElement)) continue;
-      if (el.closest("footer, [role='contentinfo'], nav, header")) continue;
-      const r = el.getBoundingClientRect();
-      if (r.width < vw * 0.22 || r.height < 220) continue;
-      if (r.top > vh * 0.75 || r.bottom < 80) continue;
-      const textLen = (el.innerText || "").replace(/\s+/g, " ").trim().length;
-      if (textLen > 60) continue;
-      const leadN = el.querySelectorAll(
-        "input[type='email'], input[type='text'], input[type='tel'], textarea, select"
-      ).length;
-      if (leadN >= 2) continue;
-      for (const child of Array.from(
-        el.querySelectorAll(
-          "[class*='spinner' i], [class*='loading' i], [aria-busy], svg"
-        )
-      )) {
-        const sr = child.getBoundingClientRect();
-        if (sr.width >= 20 && sr.height >= 20 && sr.width <= 96 && sr.height <= 96) {
-          return "hero form spinner";
-        }
-      }
-    }
-  }
   return null;
 }
 
@@ -1785,8 +1708,13 @@ export function countVisibleLeadFields(): number {
  * True when a large above-the-fold card still shows a loading spinner and has
  * no real lead inputs (Adherent HubSpot mount). Self-contained for evaluate.
  */
+/**
+ * True only when a known vendor form mount is in the fold, has no lead
+ * inputs yet, and shows an explicit spinner/loading indicator.
+ * Do not scan arbitrary empty cards / decorative SVGs — that false-positive
+ * wiped usable controls on most marketing URLs after v3.3.
+ */
 export function heroFormStillLoadingInPage(): boolean {
-  const vw = window.innerWidth || 1440;
   const vh = window.innerHeight || 900;
   const leadSel =
     "input[type='email'], input[type='text'], input[type='tel'], textarea, select";
@@ -1795,34 +1723,12 @@ export function heroFormStillLoadingInPage(): boolean {
     const cls = (el.getAttribute("class") || "").toLowerCase();
     if (/\b(loading|spinner|skeleton|throbber)\b/.test(cls)) return true;
     if (el.getAttribute("aria-busy") === "true") return true;
-    if (el instanceof SVGElement) {
-      const r = el.getBoundingClientRect();
-      // Circular SVG throbbers are often 32–72px without a "spinner" class.
-      if (
-        r.width >= 24 &&
-        r.width <= 96 &&
-        r.height >= 24 &&
-        r.height <= 96 &&
-        Math.abs(r.width - r.height) <= 8
-      ) {
-        const parent = el.parentElement;
-        const pCls = (parent?.className || "").toString().toLowerCase();
-        const pText = (parent?.innerText || "").replace(/\s+/g, " ").trim();
-        if (
-          /\b(loading|spinner|form)\b/.test(pCls) ||
-          pText.length < 8 ||
-          /loading/i.test(pText)
-        ) {
-          return true;
-        }
-      }
-    }
     return false;
   };
 
   for (const mount of Array.from(
     document.querySelectorAll(
-      ".hs-form-frame, .hbspt-form, [data-hs-forms-root], form[id^='mktoForm'], [class*='form' i]"
+      ".hs-form-frame, .hbspt-form, [data-hs-forms-root], form[id^='mktoForm_'], form[id^='hsForm']"
     )
   )) {
     if (!(mount instanceof HTMLElement)) continue;
@@ -1830,11 +1736,10 @@ export function heroFormStillLoadingInPage(): boolean {
     const st = getComputedStyle(mount);
     if (st.display === "none" || st.visibility === "hidden") continue;
     const r = mount.getBoundingClientRect();
-    if (r.width < 220 || r.height < 180) continue;
-    if (r.top > vh * 0.85 || r.bottom < 40) continue;
-    const leads = mount.querySelectorAll(leadSel);
+    if (r.width < 180 || r.height < 120) continue;
+    if (r.top > vh * 0.9 || r.bottom < 40) continue;
     let leadCount = 0;
-    for (const el of Array.from(leads)) {
+    for (const el of Array.from(mount.querySelectorAll(leadSel))) {
       if (!(el instanceof HTMLElement)) continue;
       if (el instanceof HTMLInputElement && el.type.toLowerCase() === "search") {
         continue;
@@ -1843,37 +1748,17 @@ export function heroFormStillLoadingInPage(): boolean {
       if (box.width >= 32 && box.height >= 14) leadCount += 1;
     }
     if (leadCount >= 2) continue;
-    for (const el of Array.from(mount.querySelectorAll("*"))) {
+    for (const el of Array.from(
+      mount.querySelectorAll(
+        "[class*='spinner' i], [class*='loading' i], [class*='skeleton' i], [aria-busy='true']"
+      )
+    )) {
       if (!isSpinner(el)) continue;
       const sr = el.getBoundingClientRect();
-      if (sr.width >= 20 && sr.height >= 20) return true;
+      if (sr.width >= 16 && sr.height >= 16) return true;
     }
-  }
-
-  // Fallback: large near-empty in-fold card whose only motion is a spinner.
-  for (const el of Array.from(
-    document.querySelectorAll("div, section, aside, article")
-  )) {
-    if (!(el instanceof HTMLElement)) continue;
-    if (el.closest("footer, [role='contentinfo'], nav, header")) continue;
-    const r = el.getBoundingClientRect();
-    if (r.width < vw * 0.22 || r.height < 220) continue;
-    if (r.top > vh * 0.75 || r.bottom < 80 || r.left < 0) continue;
-    const textLen = (el.innerText || "").replace(/\s+/g, " ").trim().length;
-    if (textLen > 60) continue;
-    const leads = el.querySelectorAll(leadSel);
-    let leadCount = 0;
-    for (const field of Array.from(leads)) {
-      if (!(field instanceof HTMLElement)) continue;
-      const box = field.getBoundingClientRect();
-      if (box.width >= 32 && box.height >= 14) leadCount += 1;
-    }
-    if (leadCount >= 2) continue;
-    for (const child of Array.from(el.querySelectorAll("*"))) {
-      if (!isSpinner(child)) continue;
-      const sr = child.getBoundingClientRect();
-      if (sr.width >= 20 && sr.height >= 20) return true;
-    }
+    // Empty HubSpot/Marketo mount with no fields yet counts as still loading.
+    if (leadCount === 0 && !mount.querySelector("iframe")) return true;
   }
   return false;
 }

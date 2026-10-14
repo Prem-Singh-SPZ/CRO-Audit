@@ -21,7 +21,6 @@ import { SEVERITY_META, shortCaption } from "@/lib/report-ui";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { config } from "@/lib/config";
 import Link from "next/link";
 
@@ -511,17 +510,7 @@ function PatternCardGallery({
 const SLOW_MOCKUP_MESSAGE =
   "This is taking longer than expected. Your redesign is still on the way, and the finished concept will be worth the wait.";
 
-/** Ease toward 99% over a typical Gemini wait; hit 100% only when complete. */
-const MOCKUP_PROGRESS_MS = 75_000;
-const MOCKUP_PROGRESS_CAP = 99;
 const MOCKUP_COMPLETE_HOLD_MS = 500;
-
-function mockupProgressPercent(elapsedMs: number): number {
-  const t = Math.min(1, Math.max(0, elapsedMs / MOCKUP_PROGRESS_MS));
-  // Ease-out: faster early, then slows as it approaches the cap.
-  const eased = 1 - (1 - t) * (1 - t);
-  return Math.min(MOCKUP_PROGRESS_CAP, Math.round(eased * MOCKUP_PROGRESS_CAP));
-}
 
 export function MockupGeneratingFrame({
   slow = false,
@@ -530,32 +519,16 @@ export function MockupGeneratingFrame({
   className,
 }: {
   slow?: boolean;
-  /** Redesign is ready — fill to 100%, then call onComplete. */
+  /** Redesign is ready — hold briefly, then call onComplete. */
   complete?: boolean;
   onComplete?: () => void;
   className?: string;
 }) {
-  const [percent, setPercent] = React.useState(0);
   const onCompleteRef = React.useRef(onComplete);
   onCompleteRef.current = onComplete;
 
   React.useEffect(() => {
-    if (complete) return;
-    const started = performance.now();
-    let frame = 0;
-    const tick = (now: number) => {
-      setPercent(mockupProgressPercent(now - started));
-      if (now - started < MOCKUP_PROGRESS_MS) {
-        frame = requestAnimationFrame(tick);
-      }
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [complete]);
-
-  React.useEffect(() => {
     if (!complete) return;
-    setPercent(100);
     const timer = window.setTimeout(() => {
       onCompleteRef.current?.();
     }, MOCKUP_COMPLETE_HOLD_MS);
@@ -565,9 +538,6 @@ export function MockupGeneratingFrame({
   return (
     <div
       role="status"
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={percent}
       className={cn(
         "relative flex flex-col items-center justify-center gap-3 overflow-hidden bg-muted/40 px-6 text-center",
         className
@@ -588,18 +558,9 @@ export function MockupGeneratingFrame({
       </p>
       {complete || slow ? null : (
         <p className="relative text-xs text-muted-foreground">
-          Our AI is applying the top fixes to your hero.
+          Our AI is applying the top fixes to your page.
         </p>
       )}
-      <div className="relative w-full max-w-xs space-y-1.5 pt-1">
-        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-          <span>Progress</span>
-          <span className="tabular-nums font-medium text-foreground">
-            {percent}%
-          </span>
-        </div>
-        <Progress value={percent} className="h-1.5" />
-      </div>
     </div>
   );
 }

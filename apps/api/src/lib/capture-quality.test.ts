@@ -358,7 +358,7 @@ describe("isNonLeadInputType", () => {
 });
 
 describe("finalizeIncompleteFlag with spinner form", () => {
-  it("keeps incomplete when lead fields are not ready", () => {
+  it("keeps incomplete when the form is still spinning", () => {
     const next = finalizeIncompleteFlag({
       fieldsReady: false,
       quality: {
@@ -369,6 +369,20 @@ describe("finalizeIncompleteFlag with spinner form", () => {
     });
     expect(next.incompleteCapture).toBe(true);
     expect(next.captureNote).toMatch(/not loaded|spinner/i);
+  });
+
+  it("clears empty-slot incomplete on non-form pages when not spinning", () => {
+    const next = finalizeIncompleteFlag({
+      fieldsReady: true,
+      quality: {
+        incompleteCapture: true,
+        captureNote:
+          "Part of the page had not loaded when we captured it — often the hero form.",
+      },
+      hasCollapsedIframe: false,
+    });
+    expect(next.incompleteCapture).toBe(false);
+    expect(next.captureNote).toBeNull();
   });
 });
 

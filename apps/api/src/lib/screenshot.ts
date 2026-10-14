@@ -1152,13 +1152,6 @@ async function captureScreenshotsOnce(
           "[screenshot] blank hero fold discarded — not usable as control"
         );
       } else {
-        const leadFieldsAtShot = pageStillOpen(page)
-          ? await raceTimeout(
-              page.evaluate(countVisibleLeadFields),
-              PAGE_OP_TIMEOUT_MS,
-              0
-            )
-          : 0;
         const formStillSpinning = pageStillOpen(page)
           ? await raceTimeout(
               page.evaluate(heroFormStillLoadingInPage),
@@ -1166,33 +1159,32 @@ async function captureScreenshotsOnce(
               false
             )
           : false;
-        // Never hardcode fieldsReady — site search used to count as 1 field and
-        // wipe the spinner / empty-slot incomplete note for Adherent.
-        const fieldsReady = leadFieldsAtShot >= 2 && !formStillSpinning;
+        // fieldsReady means "do not force a spinner incomplete". Non-form
+        // pages have 0 lead fields and must keep their JPEG — requiring
+        // >=2 fields made every marketing URL look incomplete after v3.3.
+        const fieldsReady = !formStillSpinning;
         const finalized = finalizeIncompleteFlag({
           fieldsReady,
           quality,
           hasCollapsedIframe,
         });
-        incompleteCapture = finalized.incompleteCapture || formStillSpinning;
-        captureNote = formStillSpinning
-          ? finalized.captureNote ??
-            "The hero form was still loading (spinner, no fields) when we captured the page."
-          : finalized.captureNote;
-        // Incomplete / spinner shots must not count as usable — otherwise Bright
-        // Data is skipped and the white/spinner JPEG becomes the report control.
-        liveUsable =
-          !incompleteCapture &&
-          !formStillSpinning &&
-          screenshots.some((s) => s.device === "desktop");
-        if (formStillSpinning || incompleteCapture) {
+        incompleteCapture = finalized.incompleteCapture;
+        captureNote = finalized.captureNote;
+        if (formStillSpinning) {
+          incompleteCapture = true;
+          captureNote =
+            "The hero form was still loading (spinner, no fields) when we captured the page.";
+          // Discard only a confirmed spinner form card — never wipe a painted
+          // page because an empty-slot heuristic fired.
           screenshots.length = 0;
           heroShot = null;
           bands.length = 0;
           liveUsable = false;
           console.warn(
-            `[screenshot] incomplete control discarded (${formStillSpinning ? "spinner" : "empty/unpainted"}) — Bright Data/archive may retry`
+            "[screenshot] hero form spinner discarded — Bright Data/archive may retry"
           );
+        } else {
+          liveUsable = screenshots.some((s) => s.device === "desktop");
         }
       }
 
@@ -1847,7 +1839,7 @@ async function shootPaintedControl(
   return { shot: taken.shot, blank: Boolean(blank) };
 }
 
-/** Cloud Run: fold first, then consent / fonts. No walk, no waitForFunction. */
+/** Cloud Run: consent, wait for HubSpot fields, then fold. No long scroll walk. */
 async function captureServerlessControl(page: Page): Promise<{
   viewport: Screenshot | null;
   control: Screenshot | null;
@@ -1860,23 +1852,37 @@ async function captureServerlessControl(page: Page): Promise<{
     PAGE_OP_TIMEOUT_MS,
     undefined
   );
-  const viewport = pageStillOpen(page)
-    ? await captureViewportJpeg(page)
-    : null;
   const dismissedConsent = await clearVisitorConsent(page, true);
+  if (dismissedConsent) {
+    await waitUntilDocumentPainted(page);
+  }
+  // Cookiebot → HubSpot often needs 15–25s on datacenter IPs. Shooting before
+  // fields land is what produced the live "spinner, no fields" / empty-slot
+  // control messages.
+  await waitUntilLeadFieldsStable(page);
   await waitForFonts(page);
   await raceTimeout(
     page.evaluate(eagerDecodeDocumentImages),
     PAGE_OP_TIMEOUT_MS,
     { promoted: 0, decoded: 0, total: 0 }
   );
+  const viewport = pageStillOpen(page)
+    ? await captureViewportJpeg(page)
+    : null;
   const painted = await shootPaintedControl(page);
   const control = painted.shot ?? viewport;
+  const spinning = pageStillOpen(page)
+    ? await raceTimeout(
+        page.evaluate(heroFormStillLoadingInPage),
+        PAGE_OP_TIMEOUT_MS,
+        false
+      )
+    : false;
   return {
     viewport,
     control,
     dismissedConsent,
-    blank: painted.shot ? painted.blank : false,
+    blank: spinning || (painted.shot ? painted.blank : false),
     method: painted.shot ? "painted" : viewport ? "viewport" : "none",
   };
 }
