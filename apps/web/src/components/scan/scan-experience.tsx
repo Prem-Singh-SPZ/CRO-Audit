@@ -54,10 +54,12 @@ export function ScanExperience({
   React.useEffect(() => {
     const controller = new AbortController();
     const timedOut = { current: false };
+    // Allow queue wait (other tabs) + Chromium capture + Gemini. Parallel
+    // tabs used to OOM the API under a 200s client cut-off.
     const timeout = setTimeout(() => {
       timedOut.current = true;
       controller.abort();
-    }, 200_000);
+    }, 360_000);
 
     (async () => {
       try {
@@ -82,10 +84,20 @@ export function ScanExperience({
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
           if (timedOut.current) {
-            onError("The audit timed out. Please try again.");
+            onError(
+              "The audit timed out — often because several audits were running at once. Finish one, then try again."
+            );
           }
         } else {
-          onError(err instanceof Error ? err.message : "Something went wrong.");
+          const raw = err instanceof Error ? err.message : "Something went wrong.";
+          // Browser TypeError when the API process dies/resets under load.
+          if (/failed to fetch|networkerror|load failed/i.test(raw)) {
+            onError(
+              "The server dropped the connection. Running 2–3 audits at once overloads Chromium — wait for one to finish, then try again."
+            );
+          } else {
+            onError(raw);
+          }
         }
       } finally {
         clearTimeout(timeout);

@@ -16,6 +16,20 @@ const MARKERS: { pattern: RegExp; reason: string }[] = [
     reason: "Bot protection",
   },
   { pattern: /protect against malicious bots?/i, reason: "Bot protection" },
+  // Cloudflare interstitial chrome (Adherent-style managed challenge).
+  {
+    pattern: /performance and security by cloudflare/i,
+    reason: "Cloudflare challenge",
+  },
+  {
+    pattern: /ray id\s*[:=]?\s*[a-f0-9]{8,}/i,
+    reason: "Cloudflare challenge",
+  },
+  {
+    pattern:
+      /cf-browser-verification|managed[_-]?challenge|cf-chl-bypass|cf-challenge-running/i,
+    reason: "Cloudflare challenge",
+  },
   {
     pattern: /verif(?:y|ies|ying)? (?:that )?you are (?:a )?(?:human|not a (?:ro)?bot)/i,
     reason: "Bot verification",
@@ -65,4 +79,32 @@ const AUTO_CLEARING = new Set(["Cloudflare challenge"]);
 
 export function isAutoClearingChallenge(reason: string | null): boolean {
   return !!reason && AUTO_CLEARING.has(reason);
+}
+
+/**
+ * When a bot wall is confirmed, drop any JPEGs taken of that interstitial so
+ * they never become the report control or mockup seed.
+ */
+export function discardWallCapture<
+  T extends {
+    blockedReason: string | null;
+    screenshots: unknown[];
+    heroShot: unknown;
+    bands: unknown[];
+  },
+>(state: T): T {
+  if (!state.blockedReason) return state;
+  if (
+    state.screenshots.length === 0 &&
+    state.heroShot == null &&
+    state.bands.length === 0
+  ) {
+    return state;
+  }
+  return {
+    ...state,
+    screenshots: [],
+    heroShot: null,
+    bands: [],
+  };
 }

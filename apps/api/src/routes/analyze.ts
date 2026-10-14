@@ -22,6 +22,7 @@ import {
   setCachedResult,
   resultCacheKey,
 } from "../lib/result-cache";
+import { analyzeSemaphore } from "../lib/concurrency";
 
 const analyze = new Hono();
 
@@ -114,26 +115,84 @@ analyze.post("/", async (c) => {
   logEvent("analyze.start", { host });
 
   try {
-    let competitorSafe = false;
-    if (competitorUrl) {
-      try {
-        await assertSafeExternalUrl(competitorUrl);
-        competitorSafe = safeHost(competitorUrl) !== host;
-      } catch {
-        // Invalid competitor URL should not fail the primary audit.
-      }
+    // Cap parallel full audits. Opening 2–3 /analyzing tabs used to launch
+    // that many Chromiums + PageSpeed + Gemini at once, OOMing or resetting
+    // the API connection ("Failed to fetch" in the browser).
+    if (analyzeSemaphore.active() > 0) {
+      logEvent("analyze.queued", {
+        host,
+        active: analyzeSemaphore.active(),
+        waiting: analyzeSemaphore.waiting(),
+      });
     }
+    const response = await analyzeSemaphore.run(() =>
+      runAnalyzeJob({
+        url,
+        host,
+        competitorUrl,
+        auditContext,
+        cacheKey,
+        startedAt,
+        resolveJob,
+      })
+    );
+    return c.json(response);
+  } catch (err) {
+    rejectJob(err);
+    logError("analyze.failed", err, {
+      host,
+      durationMs: Date.now() - startedAt,
+    });
+    return c.json({ error: "Analysis failed. Please try again." }, 500);
+  } finally {
+    inflight.delete(cacheKey);
+  }
+});
 
-    const [crawlContext, pageSpeed, screenshotResult, competitorContext] =
-      await Promise.all([
-        analyzePage(url),
-        getPageSpeed(url),
-        captureScreenshots(url),
-        competitorSafe && competitorUrl
-          ? analyzePage(competitorUrl).catch(() => null)
-          : Promise.resolve(null),
-      ]);
-    let pageContext = crawlContext;
+async function runAnalyzeJob(input: {
+  url: string;
+  host: string;
+  competitorUrl: string | undefined;
+  auditContext: {
+    targetAudience?: string;
+    coreProduct?: string;
+    primaryTrafficSource?: string;
+    competitorUrl?: string;
+  };
+  cacheKey: string;
+  startedAt: number;
+  resolveJob: (value: ReportResponse) => void;
+}): Promise<ReportResponse> {
+  const {
+    url,
+    host,
+    competitorUrl,
+    auditContext,
+    cacheKey,
+    startedAt,
+    resolveJob,
+  } = input;
+
+  let competitorSafe = false;
+  if (competitorUrl) {
+    try {
+      await assertSafeExternalUrl(competitorUrl);
+      competitorSafe = safeHost(competitorUrl) !== host;
+    } catch {
+      // Invalid competitor URL should not fail the primary audit.
+    }
+  }
+
+  const [crawlContext, pageSpeed, screenshotResult, competitorContext] =
+    await Promise.all([
+      analyzePage(url),
+      getPageSpeed(url),
+      captureScreenshots(url),
+      competitorSafe && competitorUrl
+        ? analyzePage(competitorUrl).catch(() => null)
+        : Promise.resolve(null),
+    ]);
+  let pageContext = crawlContext;
     const screenshots = screenshotResult.screenshots;
     const heroShot = screenshotResult.heroShot;
 
@@ -312,19 +371,9 @@ analyze.post("/", async (c) => {
       setCachedResult(cacheKey, response);
     }
 
-    resolveJob(response);
-    return c.json(response);
-  } catch (err) {
-    rejectJob(err);
-    logError("analyze.failed", err, {
-      host,
-      durationMs: Date.now() - startedAt,
-    });
-    return c.json({ error: "Analysis failed. Please try again." }, 500);
-  } finally {
-    inflight.delete(cacheKey);
-  }
-});
+  resolveJob(response);
+  return response;
+}
 
 const CONTROL_LOCATE_MAX_CHARS = 3_000_000;
 

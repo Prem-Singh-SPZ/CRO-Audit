@@ -2,7 +2,11 @@ import chromium from "@sparticuz/chromium";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 
 import type { LandmarkBox, LeadFormSignal } from "@cro/shared";
-import { detectChallenge, isAutoClearingChallenge } from "./challenge";
+import {
+  detectChallenge,
+  discardWallCapture,
+  isAutoClearingChallenge,
+} from "./challenge";
 import { assertSafeExternalUrl, isBlockedUrlSync } from "./net-guard";
 import { measureLandmarks } from "./landmarks";
 import { emptyLeadForm, preferLeadForm, readLeadFormInPage } from "./lead-form";
@@ -14,8 +18,10 @@ import {
   emptySignals,
   finalizeIncompleteFlag,
   formEmbedStillPendingInPage,
+  heroFormStillLoadingInPage,
   hideConsentOverlaysInPage,
   isLiveCaptureUsable,
+  shouldRetryBrightData,
   layoutSnapshotsEqual,
   collectImageLoadInventory,
   countVisibleLeadFields,
@@ -590,29 +596,25 @@ export async function captureScreenshots(url: string): Promise<ScreenshotResult>
     console.warn("[screenshot] retrying empty capture");
     result = await captureScreenshotsOnce(url, archiveLookup);
   }
-  // Blocked or empty capture: one retry through Bright Data's remote browser
-  // (residential IPs + challenge solving) before the Wayback/heuristic
-  // fallbacks. Only the retry pays Bright Data's per-GB rate — never the
-  // first attempt.
+  // Blocked, empty, or blank-hero capture: one retry through Bright Data's
+  // remote browser (residential IPs + challenge solving) before the
+  // Wayback/heuristic fallbacks. Only the retry pays Bright Data's per-GB
+  // rate — never the first attempt. A white fold with liveUsable=false must
+  // not skip this (Adherent Cookiebot remounts used to keep a blank JPEG).
   const bdEndpoint = brightDataEndpoint();
-  const unusable =
-    result.blockedReason != null ||
-    !result.screenshots.some((s) => s.device === "desktop");
+  const unusable = shouldRetryBrightData(result);
   if (bdEndpoint && unusable) {
     console.warn(
-      `[screenshot] direct capture unusable (${result.blockedReason ?? "no desktop shot"}) — retrying via Bright Data`
+      `[screenshot] direct capture unusable (${result.blockedReason ?? (result.liveUsable === false ? "blank/unusable live" : "no desktop shot")}) — retrying via Bright Data`
     );
     try {
       const viaBd = await captureScreenshotsOnce(url, archiveLookup, bdEndpoint);
-      const bdUsable =
-        viaBd.blockedReason == null &&
-        viaBd.screenshots.some((s) => s.device === "desktop");
-      if (bdUsable) {
+      if (isLiveCaptureUsable(viaBd)) {
         console.log("[screenshot] Bright Data retry produced a usable capture");
         return viaBd;
       }
       console.warn(
-        `[screenshot] Bright Data retry also unusable (${viaBd.blockedReason ?? "no desktop shot"}) — keeping first result`
+        `[screenshot] Bright Data retry also unusable (${viaBd.blockedReason ?? (viaBd.liveUsable === false ? "blank/unusable live" : "no desktop shot")}) — keeping first result`
       );
     } catch (err) {
       console.warn(
@@ -719,6 +721,17 @@ async function captureScreenshotsOnce(
           (err as Error)?.message ?? err
         );
       }
+      // Early fold often lands on a Cloudflare wall — drop it before we trust it.
+      const earlyWall = detectChallenge(await sampleChallengeText(page));
+      if (earlyWall) {
+        blockedReason = earlyWall;
+        screenshots.length = 0;
+        heroShot = null;
+        bands.length = 0;
+        console.warn(
+          `[screenshot] early fold was a wall (${earlyWall}) — discarded`
+        );
+      }
     }
 
     // Upgrade to a JS-painted control when Chromium survives. If V8 SIGILL's,
@@ -753,7 +766,52 @@ async function captureScreenshotsOnce(
     await waitOutAutoChallenge(page);
     if (usesLocalChrome()) {
       await page
-        .waitForFunction(countVisibleLeadFields, { timeout: 10_000 })
+        .waitForFunction(
+          () => {
+            // Inlined: wait until real lead fields exist (not site search).
+            let n = 0;
+            for (const el of Array.from(
+              document.querySelectorAll("input, textarea, select")
+            )) {
+              if (!(el instanceof HTMLElement)) continue;
+              if (el instanceof HTMLInputElement) {
+                const t = el.type.toLowerCase();
+                if (
+                  t === "hidden" ||
+                  t === "submit" ||
+                  t === "button" ||
+                  t === "image" ||
+                  t === "checkbox" ||
+                  t === "radio" ||
+                  t === "file" ||
+                  t === "search" ||
+                  t === "reset"
+                ) {
+                  continue;
+                }
+              }
+              if (
+                el.closest(
+                  "nav, [role='search'], .site-header__nav--search-form"
+                )
+              ) {
+                continue;
+              }
+              const st = getComputedStyle(el);
+              if (
+                st.display === "none" ||
+                st.visibility === "hidden" ||
+                Number(st.opacity) === 0
+              ) {
+                continue;
+              }
+              const r = el.getBoundingClientRect();
+              if (r.width >= 32 && r.height >= 14) n += 1;
+            }
+            return n >= 2;
+          },
+          { timeout: 25_000 }
+        )
         .catch(() => {});
     }
     const leadFieldsBeforeConsent = await raceTimeout(
@@ -766,18 +824,14 @@ async function captureScreenshotsOnce(
     // painted (Fastly remount). Still click Accept All / hide other CMPs.
     if (await clearVisitorConsent(page, skipConsentClick)) {
       dismissedConsent = true;
+      await waitUntilDocumentPainted(page);
     }
     await unregisterServiceWorkers(page);
 
     // Detect bot walls from the rendered page before trusting the screenshot.
     // Time-bounded: on a pegged page these can hang indefinitely, so we cap
     // them and simply skip challenge detection if they don't return in time.
-    const title = await raceTimeout(page.title(), PAGE_OP_TIMEOUT_MS, "");
-    const bodySample = await raceTimeout(
-      page.evaluate(() => document.body?.innerText?.slice(0, 600) ?? ""),
-      PAGE_OP_TIMEOUT_MS,
-      ""
-    );
+    const challengeSample = await sampleChallengeText(page);
     // Redirect SSRF guard: the page may have navigated to a different host.
     // Re-validate the final URL (DNS-resolving) before trusting/capturing it.
     const finalUrl = page.url();
@@ -799,10 +853,12 @@ async function captureScreenshotsOnce(
       }
     }
 
-    const challenge = blockedReason ? null : detectChallenge(`${title} ${bodySample}`);
+    const challenge = blockedReason
+      ? null
+      : detectChallenge(challengeSample);
     if (challenge) {
       blockedReason = challenge;
-    } else if (!blockedReason && status >= 400 && !bodySample.trim()) {
+    } else if (!blockedReason && status >= 400 && !challengeSample.trim()) {
       // Only treat an error status as a hard block when the page also failed to
       // render any real content. A 4xx that still paints usable content (some
       // WAFs/CDNs do this) should not cost us the screenshot.
@@ -810,6 +866,10 @@ async function captureScreenshotsOnce(
     }
 
     if (blockedReason) {
+      screenshots.length = 0;
+      heroShot = null;
+      bands.length = 0;
+      liveUsable = false;
       console.warn(
         `[screenshot] skipping capture for ${url} — reason: ${blockedReason} (status ${status})`
       );
@@ -839,6 +899,10 @@ async function captureScreenshotsOnce(
       // thresholds avoid false-positives on legitimately sparse pages.
       if (rendered && rendered.textLength < 40 && rendered.h1Count === 0) {
         blockedReason = "Empty / non-rendered page";
+        screenshots.length = 0;
+        heroShot = null;
+        bands.length = 0;
+        liveUsable = false;
         console.warn(
           `[screenshot] blank render for ${url} — marking as non-rendered`
         );
@@ -1075,19 +1139,61 @@ async function captureScreenshotsOnce(
           "The viewport had not finished loading (form, images, or spinner) when we captured the page.";
         liveUsable = false;
       } else if (control.blank) {
+        // Drop the white fold so it never becomes the report control / mockup
+        // seed. Archive + Bright Data can still recover a painted page.
         incompleteCapture = true;
         captureNote =
           "The hero image had not finished painting when we captured the page.";
         liveUsable = false;
+        screenshots.length = 0;
+        heroShot = null;
+        bands.length = 0;
+        console.warn(
+          "[screenshot] blank hero fold discarded — not usable as control"
+        );
       } else {
+        const leadFieldsAtShot = pageStillOpen(page)
+          ? await raceTimeout(
+              page.evaluate(countVisibleLeadFields),
+              PAGE_OP_TIMEOUT_MS,
+              0
+            )
+          : 0;
+        const formStillSpinning = pageStillOpen(page)
+          ? await raceTimeout(
+              page.evaluate(heroFormStillLoadingInPage),
+              PAGE_OP_TIMEOUT_MS,
+              false
+            )
+          : false;
+        // Never hardcode fieldsReady — site search used to count as 1 field and
+        // wipe the spinner / empty-slot incomplete note for Adherent.
+        const fieldsReady = leadFieldsAtShot >= 2 && !formStillSpinning;
         const finalized = finalizeIncompleteFlag({
-          fieldsReady: true,
+          fieldsReady,
           quality,
           hasCollapsedIframe,
         });
-        incompleteCapture = finalized.incompleteCapture;
-        captureNote = finalized.captureNote;
-        liveUsable = screenshots.some((s) => s.device === "desktop");
+        incompleteCapture = finalized.incompleteCapture || formStillSpinning;
+        captureNote = formStillSpinning
+          ? finalized.captureNote ??
+            "The hero form was still loading (spinner, no fields) when we captured the page."
+          : finalized.captureNote;
+        // Incomplete / spinner shots must not count as usable — otherwise Bright
+        // Data is skipped and the white/spinner JPEG becomes the report control.
+        liveUsable =
+          !incompleteCapture &&
+          !formStillSpinning &&
+          screenshots.some((s) => s.device === "desktop");
+        if (formStillSpinning || incompleteCapture) {
+          screenshots.length = 0;
+          heroShot = null;
+          bands.length = 0;
+          liveUsable = false;
+          console.warn(
+            `[screenshot] incomplete control discarded (${formStillSpinning ? "spinner" : "empty/unpainted"}) — Bright Data/archive may retry`
+          );
+        }
       }
 
       // Bands walk the page with extra CDP shots. Skip on Cloud Run.
@@ -1097,6 +1203,24 @@ async function captureScreenshotsOnce(
           bands,
           Math.max(1, Math.floor(stitchH || VIEWPORT.height))
         );
+      }
+
+      // Managed challenges often paint after the first fold — re-check so a
+      // wall JPEG never becomes the report control / mockup seed.
+      if (pageStillOpen(page) && screenshots.length > 0) {
+        const lateWall = detectChallenge(await sampleChallengeText(page));
+        if (lateWall) {
+          blockedReason = lateWall;
+          screenshots.length = 0;
+          heroShot = null;
+          bands.length = 0;
+          liveUsable = false;
+          incompleteCapture = false;
+          captureNote = null;
+          console.warn(
+            `[screenshot] post-capture wall (${lateWall}) — discarded`
+          );
+        }
       }
     }
 
@@ -1138,15 +1262,31 @@ async function captureScreenshotsOnce(
       }
     }
 
-    if (screenshots.length === 0 && pageStillOpen(page)) {
+    // Never last-resort shoot a known bot wall or an incomplete spinner fold —
+    // leave shots empty so Bright Data / archive / the honest report can take over.
+    if (
+      !blockedReason &&
+      !incompleteCapture &&
+      screenshots.length === 0 &&
+      pageStillOpen(page)
+    ) {
       try {
         const last = await captureViewportJpeg(page);
         if (last) {
-          screenshots.push(last);
-          heroShot = last;
-          liveUsable = true;
-          incompleteCapture = false;
-          captureNote = null;
+          const wall = detectChallenge(await sampleChallengeText(page));
+          if (wall) {
+            blockedReason = wall;
+            liveUsable = false;
+            console.warn(
+              `[screenshot] last-resort fold was a wall (${wall}) — discarded`
+            );
+          } else {
+            screenshots.push(last);
+            heroShot = last;
+            liveUsable = true;
+            incompleteCapture = false;
+            captureNote = null;
+          }
         }
       } catch (err) {
         console.warn(
@@ -1158,7 +1298,12 @@ async function captureScreenshotsOnce(
   } catch (err) {
     console.error("[screenshot] capture failed:", (err as Error)?.message ?? err);
     console.error("[screenshot] stack:", (err as Error)?.stack);
-    if (isDeadPageError(err) && screenshots.length === 0 && heroShot) {
+    if (
+      !blockedReason &&
+      isDeadPageError(err) &&
+      screenshots.length === 0 &&
+      heroShot
+    ) {
       screenshots.push(heroShot);
     }
   } finally {
@@ -1166,7 +1311,7 @@ async function captureScreenshotsOnce(
     if (!remote) releaseSlot();
   }
 
-  return {
+  const result = discardWallCapture({
     screenshots,
     heroShot,
     bands,
@@ -1182,13 +1327,52 @@ async function captureScreenshotsOnce(
     screenshotSource,
     archiveCapturedAt,
     leadForm,
-  };
+  });
+  if (result.blockedReason) {
+    return { ...result, liveUsable: false };
+  }
+  return result;
 }
 
 async function sampleChallengeText(page: Page): Promise<string> {
   const title = await raceTimeout(page.title(), PAGE_OP_TIMEOUT_MS, "");
   const body = await raceTimeout(
-    page.evaluate(() => document.body?.innerText?.slice(0, 600) ?? ""),
+    page.evaluate(() => {
+      const parts: string[] = [];
+      const top = document.body?.innerText?.slice(0, 600) ?? "";
+      if (top) parts.push(top);
+
+      for (const iframe of Array.from(document.querySelectorAll("iframe"))) {
+        const src = iframe.getAttribute("src") ?? "";
+        const id = iframe.id ?? "";
+        const name = iframe.getAttribute("name") ?? "";
+        const hint = `${src} ${id} ${name}`;
+        if (
+          /challenge|turnstile|cf-|cloudflare|captcha|managed/i.test(hint)
+        ) {
+          parts.push(hint.slice(0, 240));
+        }
+        try {
+          const doc = iframe.contentDocument;
+          const frameText = doc?.body?.innerText?.slice(0, 400) ?? "";
+          if (frameText) parts.push(frameText);
+        } catch {
+          // Cross-origin CF frames are unreadable; src/id hints above still help.
+        }
+      }
+
+      // Specific CF challenge markers often live in markup, not painted text.
+      const html = document.documentElement?.innerHTML?.slice(0, 3000) ?? "";
+      if (
+        /cf-browser-verification|managed[_-]?challenge|cf-chl-bypass|cf-challenge-running/i.test(
+          html
+        )
+      ) {
+        parts.push(html);
+      }
+
+      return parts.join("\n");
+    }),
     PAGE_OP_TIMEOUT_MS,
     ""
   );
@@ -1314,7 +1498,7 @@ async function prepareViewportForShot(
       .waitForNetworkIdle({ idleTime: 800, timeout: 8000 })
       .catch(() => {});
     await page
-      .waitForFunction(countVisibleLeadFields, { timeout: 10_000 })
+      .waitForFunction(countVisibleLeadFields, { timeout: 25_000 })
       .catch(() => {});
   }
   const fieldsBefore = await raceTimeout(
@@ -1324,6 +1508,12 @@ async function prepareViewportForShot(
   );
   if (await clearVisitorConsent(page, shouldSkipConsentClick(fieldsBefore))) {
     dismissedConsent = true;
+    // Cookiebot / CMP Accept often remounts the marketing SPA; wait for the
+    // hero to paint again before we declare the viewport ready.
+    await waitUntilDocumentPainted(page);
+    // HubSpot frequently boots only after consent — wait for fields or give
+    // the spinner time to clear before prepareViewport returns.
+    await waitUntilLeadFieldsStable(page);
   }
   await waitForFonts(page);
   let ready = false;
@@ -1357,7 +1547,8 @@ async function prepareViewportForShot(
 /** Progressive forms may remount (6→2). No-form pages exit after a short zero-stable. */
 async function waitUntilLeadFieldsStable(page: Page): Promise<number> {
   const started = Date.now();
-  const deadline = started + 14_000;
+  // HubSpot on Cookiebot sites (Adherent) often needs 15–25s after Accept.
+  const deadline = started + 28_000;
   let prev = await raceTimeout(
     page.evaluate(countVisibleLeadFields),
     PAGE_OP_TIMEOUT_MS,
@@ -1365,15 +1556,30 @@ async function waitUntilLeadFieldsStable(page: Page): Promise<number> {
   );
   let stableSince = Date.now();
   while (Date.now() < deadline) {
+    const spinning = await raceTimeout(
+      page.evaluate(heroFormStillLoadingInPage),
+      PAGE_OP_TIMEOUT_MS,
+      false
+    );
+    const pending = await raceTimeout(
+      page.evaluate(formEmbedStillPendingInPage),
+      PAGE_OP_TIMEOUT_MS,
+      null
+    );
     const elapsedMs = Date.now() - started;
     const stableMs = Date.now() - stableSince;
-    const phase = leadFieldWaitDecision({
-      prev,
-      next: prev,
-      elapsedMs,
-      stableMs,
-    });
-    if (phase !== "wait") return prev;
+    // Keep waiting while a hero spinner / empty HubSpot mount is visible,
+    // even if a stray non-lead input briefly bumped the count.
+    if (!spinning && !pending) {
+      const phase = leadFieldWaitDecision({
+        prev,
+        next: prev,
+        elapsedMs,
+        stableMs,
+        minFormWaitMs: 10_000,
+      });
+      if (phase !== "wait") return prev;
+    }
     await sleep(500);
     const next = await raceTimeout(
       page.evaluate(countVisibleLeadFields),
@@ -1738,7 +1944,7 @@ async function captureControlFullPage(
       PAGE_OP_TIMEOUT_MS,
       undefined
     );
-    const fieldCount = await waitUntilLeadFieldsStable(page);
+    const fieldCount =     await waitUntilLeadFieldsStable(page);
     await waitUntilDocumentPainted(page);
     // Scroll the real viewport through the page so IntersectionObserver-driven
     // reveal effects (Framer appear, Webflow IX, AOS) fire for every section;
@@ -1747,6 +1953,20 @@ async function captureControlFullPage(
     if (usesLocalChrome()) {
       await walkUntilPageSettled(page);
       await waitUntilDocumentPainted(page);
+      // HubSpot often remounts after the scroll walk — wait for fields again
+      // before the control JPEG so we do not shoot the spinner card.
+      await waitUntilLeadFieldsStable(page);
+      const spinningAfterWalk = await raceTimeout(
+        page.evaluate(heroFormStillLoadingInPage),
+        PAGE_OP_TIMEOUT_MS,
+        false
+      );
+      if (spinningAfterWalk) {
+        console.warn(
+          "[screenshot] hero form spinning after walk — waiting once more"
+        );
+        await waitUntilLeadFieldsStable(page);
+      }
     }
     if (!pageStillOpen(page)) {
       return { shot: null, ready: false, blank: false };
@@ -1783,9 +2003,38 @@ async function captureControlFullPage(
     if (!pageStillOpen(page)) {
       return { shot: null, ready: false, blank: false };
     }
+    // Confirm HubSpot (etc.) is still painted right before the JPEG — scroll
+    // walks remount embeds and leave a white/spinner card in the stitch.
+    if (usesLocalChrome() && pageStillOpen(page)) {
+      const spinning = await raceTimeout(
+        page.evaluate(heroFormStillLoadingInPage),
+        PAGE_OP_TIMEOUT_MS,
+        false
+      );
+      if (spinning) {
+        await waitUntilLeadFieldsStable(page);
+      }
+    }
     const taken = await shootPaintedControl(page);
-    const shot = taken.shot;
-    const blank = taken.blank;
+    let shot = taken.shot;
+    let blank = taken.blank;
+    // If the full-page stitch is a white plate but the fold is painted, keep
+    // the fold — better a usable hero than a blank control.
+    if ((blank || !shot) && pageStillOpen(page)) {
+      const fold = await captureViewportJpeg(page);
+      const foldBlank = await raceTimeout(
+        page.evaluate(isViewportVisuallyBlank),
+        PAGE_OP_TIMEOUT_MS,
+        true
+      );
+      if (fold && !foldBlank) {
+        shot = fold;
+        blank = false;
+        console.warn(
+          "[screenshot] full-page blank — falling back to painted viewport fold"
+        );
+      }
+    }
     let ready = !undecode && gateReady;
     // A real desktop JPEG is enough when the viewport is not a white plate.
     // Sparse text pages (example.com) still pass the blank probe. A hero

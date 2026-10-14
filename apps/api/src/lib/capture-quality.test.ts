@@ -15,6 +15,8 @@ import {
   layoutSnapshotsEqual,
   isConsentAcceptLabel,
   isLiveCaptureUsable,
+  isNonLeadInputType,
+  shouldRetryBrightData,
   isDeadPageError,
   isNearWhiteLuma,
   leadFieldWaitDecision,
@@ -320,6 +322,53 @@ describe("isLiveCaptureUsable", () => {
         liveUsable: false,
       })
     ).toBe(false);
+  });
+});
+
+describe("shouldRetryBrightData", () => {
+  it("retries blank-hero captures that still kept a JPEG", () => {
+    expect(
+      shouldRetryBrightData({
+        blockedReason: null,
+        screenshots: [{ device: "desktop" }],
+        liveUsable: false,
+      })
+    ).toBe(true);
+  });
+
+  it("does not retry a painted usable live shot", () => {
+    expect(
+      shouldRetryBrightData({
+        blockedReason: null,
+        screenshots: [{ device: "desktop" }],
+        liveUsable: true,
+      })
+    ).toBe(false);
+  });
+});
+
+describe("isNonLeadInputType", () => {
+  it("excludes site search so header search cannot satisfy the form wait", () => {
+    expect(isNonLeadInputType("search")).toBe(true);
+    expect(isNonLeadInputType("hidden")).toBe(true);
+    expect(isNonLeadInputType("text")).toBe(false);
+    expect(isNonLeadInputType("email")).toBe(false);
+    expect(isNonLeadInputType("tel")).toBe(false);
+  });
+});
+
+describe("finalizeIncompleteFlag with spinner form", () => {
+  it("keeps incomplete when lead fields are not ready", () => {
+    const next = finalizeIncompleteFlag({
+      fieldsReady: false,
+      quality: {
+        incompleteCapture: true,
+        captureNote: "Part of the page had not loaded when we captured it.",
+      },
+      hasCollapsedIframe: false,
+    });
+    expect(next.incompleteCapture).toBe(true);
+    expect(next.captureNote).toMatch(/not loaded|spinner/i);
   });
 });
 
